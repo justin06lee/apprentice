@@ -1,0 +1,175 @@
+{
+  "description": "Apprentice is a desktop study app for learning from textbook PDFs. It combines reading and annotation with AI explanations, personalized rewrites, flashcards, sketches, and a knowledge map.",
+  "features": [
+    "Import textbooks with text, figures, footnotes, and structure",
+    "Read, highlight, annotate, and search across books",
+    "Track reading position and chapter progress",
+    "Ask an LLM questions about passages and study context",
+    "Edit passages or save personalized AI rewrites",
+    "Draw sketches and pin them to passages",
+    "Generate flashcards and schedule reviews with FSRS",
+    "Map concepts, relationships, and what you know",
+    "Navigate with a command palette and customize reading settings"
+  ],
+  "layers": [
+    {
+      "name": "Desktop interface",
+      "what": "Reader and study controls",
+      "where": "web/src",
+      "slug": "desktop-interface"
+    },
+    {
+      "name": "Electron",
+      "what": "Desktop window and typed IPC",
+      "where": "desktop/main.ts, desktop/preload.ts, shared/api.ts",
+      "slug": "electron"
+    },
+    {
+      "name": "Study services",
+      "what": "Import, AI, library, scheduling, and knowledge graph",
+      "where": "desktop",
+      "slug": "study-services"
+    },
+    {
+      "name": "Storage and PDF engine",
+      "what": "SQLite with FTS5 and MuPDF",
+      "where": "desktop/db.ts, desktop/ingest",
+      "slug": "storage-and-pdf-engine"
+    }
+  ],
+  "flows": [
+    {
+      "name": "Import a textbook",
+      "steps": [
+        "PDF",
+        "MuPDF extraction",
+        "structure and concept analysis",
+        "SQLite library"
+      ]
+    },
+    {
+      "name": "Read and study",
+      "steps": [
+        "desktop interface",
+        "typed IPC",
+        "library and study services",
+        "saved progress and annotations"
+      ]
+    },
+    {
+      "name": "Ask or rewrite",
+      "steps": [
+        "selected passage and study context",
+        "AI service",
+        "explanation or personalized passage"
+      ]
+    },
+    {
+      "name": "Review knowledge",
+      "steps": [
+        "generated flashcards and concepts",
+        "FSRS reviews",
+        "knowledge graph"
+      ]
+    }
+  ],
+  "layout": [
+    "web/src — desktop interface and client state",
+    "desktop/ingest — PDF extraction and textbook analysis",
+    "desktop/knowledge — concepts and relationship graph",
+    "desktop/db.ts — SQLite storage",
+    "desktop/ai.ts — LLM study features",
+    "desktop/srs.ts — flashcard scheduling",
+    "desktop/main.ts — Electron main process",
+    "desktop/preload.ts — interface bridge",
+    "shared — domain types and IPC contract",
+    "scripts — build and parser utilities"
+  ],
+  "map": [
+    {
+      "name": "PDF import and parsing",
+      "files": [
+        "desktop/ingest/extract.ts",
+        "desktop/ingest/analyze.ts",
+        "desktop/ingest/pdf.ts",
+        "desktop/ingest/worker.ts"
+      ]
+    },
+    {
+      "name": "Textbook structure and concepts",
+      "files": [
+        "desktop/ingest/units.ts",
+        "desktop/ingest/concepts.ts",
+        "desktop/knowledge/terms.ts",
+        "desktop/knowledge/graph.ts"
+      ]
+    },
+    {
+      "name": "Reader text and selection",
+      "files": [
+        "web/src/lib/text.ts",
+        "web/src/lib/selection.ts",
+        "web/src/lib/format.ts",
+        "web/src/components/ui.tsx"
+      ]
+    },
+    {
+      "name": "AI questions and rewrites",
+      "files": [
+        "desktop/ai.ts",
+        "desktop/context.ts",
+        "web/src/lib/markdown.ts"
+      ]
+    },
+    {
+      "name": "Library and storage",
+      "files": [
+        "desktop/library.ts",
+        "desktop/db.ts"
+      ]
+    },
+    {
+      "name": "Flashcard reviews",
+      "files": [
+        "desktop/srs.ts"
+      ]
+    },
+    {
+      "name": "PDF rendering",
+      "files": [
+        "desktop/render.ts",
+        "desktop/render-worker.ts"
+      ]
+    },
+    {
+      "name": "Sketches",
+      "files": [
+        "desktop/sketches.ts"
+      ]
+    },
+    {
+      "name": "Desktop IPC",
+      "files": [
+        "shared/api.ts",
+        "shared/types.ts",
+        "desktop/main.ts",
+        "desktop/preload.ts"
+      ]
+    },
+    {
+      "name": "Interface state and appearance",
+      "files": [
+        "web/src/store.ts",
+        "web/src/api.ts",
+        "web/src/styles/base.css"
+      ]
+    },
+    {
+      "name": "Build and parsing tools",
+      "files": [
+        "scripts/build-main.ts",
+        "scripts/parse.ts"
+      ]
+    }
+  ]
+}
