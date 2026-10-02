@@ -5,6 +5,7 @@
  */
 import { GraduationCap, LibraryBig, Settings as SettingsIcon, Upload, Waypoints } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
+import icon from "../../assets/apprentice.svg";
 import { api, errorText, pathForFile } from "./api";
 import { Toasts } from "./components/ui";
 import { mod } from "./lib/format";
@@ -57,10 +58,7 @@ function Rail() {
   return (
     <nav className="rail">
       <div className="rail-mark" title="apprentice">
-        <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden>
-          <rect x="1" y="1" width="30" height="30" rx="9" fill="var(--ink)" />
-          <path d="M9.5 22.5 15.2 9.2c.3-.7 1.3-.7 1.6 0l5.7 13.3M11.8 17.6h8.4" stroke="var(--paper)" strokeWidth="2.3" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+        <img src={icon} alt="apprentice" width={36} height={36} draggable={false} />
       </div>
       {item("library", "Library", <LibraryBig size={19} />, { name: "library" }, `${mod}1`)}
       {item("review", "Review", <GraduationCap size={19} />, { name: "review" }, `${mod}2`, due)}

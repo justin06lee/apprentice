@@ -1,10 +1,11 @@
 {
-  "description": "Apprentice is a desktop study app for learning from textbook PDFs. It combines reading and annotation with AI explanations, personalized rewrites, flashcards, sketches, and a knowledge map.",
+  "description": "Apprentice is a desktop study app for people learning from textbook PDFs. It combines reflowed reading and annotation with AI explanations, personalized rewrites, flashcards, sketches, and a knowledge map.",
   "features": [
-    "Import textbooks with text, figures, footnotes, and structure",
-    "Read, highlight, annotate, and search across books",
-    "Track reading position and chapter progress",
-    "Ask an LLM questions about passages and study context",
+    "Import textbooks with chapters, figures, footnotes, mathematics, and structure",
+    "Read reflowed text or inspect the original PDF pages",
+    "Highlight, annotate, and search within or across books",
+    "Track reading position, time, and chapter progress",
+    "Ask an LLM questions using passages and study context",
     "Edit passages or save personalized AI rewrites",
     "Draw sketches and pin them to passages",
     "Generate flashcards and schedule reviews with FSRS",
@@ -13,163 +14,203 @@
   ],
   "layers": [
     {
-      "name": "Desktop interface",
-      "what": "Reader and study controls",
-      "where": "web/src",
-      "slug": "desktop-interface"
+      "name": "App shell",
+      "what": "React 19, zustand, and Vite provide navigation, library, settings, shared UI, and window state.",
+      "slug": "app-shell",
+      "paths": [
+        "web/index.html",
+        "web/src/App.tsx",
+        "web/src/main.tsx",
+        "web/src/api.ts",
+        "web/src/store.ts",
+        "web/src/components/",
+        "web/src/lib/",
+        "web/src/styles/",
+        "web/src/views/CommandPalette.tsx",
+        "web/src/views/library/",
+        "web/src/views/settings/",
+        "vite.config.ts"
+      ]
     },
     {
-      "name": "Electron",
-      "what": "Desktop window and typed IPC",
-      "where": "desktop/main.ts, desktop/preload.ts, shared/api.ts",
-      "slug": "electron"
+      "name": "Reader",
+      "what": "React views display chapters and original pages, handle selections, notes, passage edits, search, and reading progress.",
+      "slug": "reader",
+      "paths": [
+        "web/src/views/reader/"
+      ]
     },
     {
-      "name": "Study services",
-      "what": "Import, AI, library, scheduling, and knowledge graph",
-      "where": "desktop",
-      "slug": "study-services"
+      "name": "Study tools",
+      "what": "React panels provide questions, notes, cards, concepts, and reviews; Markdown and KaTeX render answers.",
+      "slug": "study-tools",
+      "paths": [
+        "web/src/views/panel/",
+        "web/src/views/review/"
+      ]
     },
     {
-      "name": "Storage and PDF engine",
-      "what": "SQLite with FTS5 and MuPDF",
-      "where": "desktop/db.ts, desktop/ingest",
-      "slug": "storage-and-pdf-engine"
+      "name": "Visual canvases",
+      "what": "Canvas views draw sketches and a force-directed knowledge map with worker-based layout.",
+      "slug": "visual-canvases",
+      "paths": [
+        "web/src/views/sketch/",
+        "web/src/views/map/"
+      ]
+    },
+    {
+      "name": "IPC contract",
+      "what": "Shared TypeScript types, inline-text parsing, and the Api contract connect the renderer and main process.",
+      "slug": "ipc-contract",
+      "paths": [
+        "shared/"
+      ]
+    },
+    {
+      "name": "Desktop bridge",
+      "what": "Electron main and preload expose the API and connect the window to desktop services.",
+      "slug": "desktop-bridge",
+      "paths": [
+        "desktop/main.ts",
+        "desktop/preload.ts"
+      ]
+    },
+    {
+      "name": "PDF import and rendering",
+      "what": "MuPDF extraction, structural analysis, import workers, and page rendering turn PDFs into readable books and assets.",
+      "slug": "pdf-import",
+      "paths": [
+        "desktop/ingest/",
+        "desktop/render.ts",
+        "desktop/render-worker.ts"
+      ]
+    },
+    {
+      "name": "Library and storage",
+      "what": "SQLite stores books and study data; library services handle reading and search, with files kept per book.",
+      "slug": "library-storage",
+      "paths": [
+        "desktop/db.ts",
+        "desktop/library.ts",
+        "desktop/sketches.ts"
+      ]
+    },
+    {
+      "name": "Learning services",
+      "what": "ts-fsrs schedules card reviews; concept services calculate knowledge and mastery.",
+      "slug": "learning-services",
+      "paths": [
+        "desktop/srs.ts",
+        "desktop/knowledge/"
+      ]
+    },
+    {
+      "name": "AI services",
+      "what": "Yagami uses signed-in coding-agent CLIs for questions, rewrites, and background model work.",
+      "slug": "ai-services",
+      "paths": [
+        "desktop/ai.ts",
+        "desktop/context.ts"
+      ]
+    },
+    {
+      "name": "Build and tooling",
+      "what": "Bun scripts, esbuild, Vite, electron-builder, and Make build, test, package, install, and inspect imports.",
+      "slug": "build-tooling",
+      "paths": [
+        "scripts/",
+        "Makefile",
+        "package.json",
+        "bun.lock",
+        "tsconfig.json",
+        "desktop/test/"
+      ]
+    },
+    {
+      "name": "Desktop runtime",
+      "what": "Electron runs the app on macOS and Linux; MuPDF runs as WASM and SQLite uses node:sqlite.",
+      "slug": "desktop-runtime"
     }
   ],
   "flows": [
     {
       "name": "Import a textbook",
       "steps": [
-        "PDF",
-        "MuPDF extraction",
-        "structure and concept analysis",
-        "SQLite library"
+        "Library (web/src/views/library/Library.tsx)",
+        "IPC proxy (web/src/api.ts)",
+        "Electron bridge (desktop/preload.ts)",
+        "Import worker (desktop/ingest/worker.ts)",
+        "MuPDF extraction and structure (desktop/ingest/extract.ts, desktop/ingest/analyze.ts)",
+        "SQLite and book files (desktop/db.ts)"
       ]
     },
     {
-      "name": "Read and study",
+      "name": "Read and annotate",
       "steps": [
-        "desktop interface",
-        "typed IPC",
-        "library and study services",
-        "saved progress and annotations"
+        "Reader (web/src/views/reader/Reader.tsx)",
+        "Reading column and selection (web/src/views/reader/UnitView.tsx)",
+        "IPC proxy (web/src/api.ts)",
+        "Library service (desktop/library.ts)",
+        "SQLite (desktop/db.ts)"
       ]
     },
     {
-      "name": "Ask or rewrite",
+      "name": "Ask about a passage",
       "steps": [
-        "selected passage and study context",
-        "AI service",
-        "explanation or personalized passage"
+        "Ask panel (web/src/views/panel/Ask.tsx)",
+        "IPC proxy (web/src/api.ts)",
+        "Study context (desktop/context.ts)",
+        "Yagami integration (desktop/ai.ts)",
+        "Signed-in coding-agent CLI"
       ]
     },
     {
-      "name": "Review knowledge",
+      "name": "Review and update knowledge",
       "steps": [
-        "generated flashcards and concepts",
-        "FSRS reviews",
-        "knowledge graph"
+        "Review view (web/src/views/review/Review.tsx)",
+        "IPC proxy (web/src/api.ts)",
+        "FSRS scheduling (desktop/srs.ts)",
+        "Knowledge graph (desktop/knowledge/graph.ts)",
+        "SQLite (desktop/db.ts)",
+        "Knowledge map (web/src/views/map/KnowledgeMap.tsx)"
       ]
     }
   ],
   "layout": [
-    "web/src — desktop interface and client state",
-    "desktop/ingest — PDF extraction and textbook analysis",
-    "desktop/knowledge — concepts and relationship graph",
-    "desktop/db.ts — SQLite storage",
-    "desktop/ai.ts — LLM study features",
-    "desktop/srs.ts — flashcard scheduling",
-    "desktop/main.ts — Electron main process",
-    "desktop/preload.ts — interface bridge",
-    "shared — domain types and IPC contract",
-    "scripts — build and parser utilities"
+    "desktop/ — Electron main process, storage, AI, rendering, and learning services",
+    "desktop/ingest/ — PDF extraction, structure, concepts, and import worker",
+    "desktop/knowledge/ — concept terms and mastery graph",
+    "desktop/test/ — desktop tests, including PDF parsing",
+    "shared/ — domain types, inline-text parser, and IPC contract",
+    "web/src/views/reader/ — reading column, selection tools, search, and page view",
+    "web/src/views/panel/ — ask, notes, cards, concepts, and sketch tabs",
+    "web/src/views/review/ — flashcard review",
+    "web/src/views/map/ — knowledge map and layout worker",
+    "web/src/views/sketch/ — drawing canvas and rendering",
+    "web/src/ — app shell, store, API proxy, components, and styles",
+    "scripts/ — development, main-process build, and PDF inspection",
+    "Makefile — packaging, installation, updates, and launch",
+    "CLAUDE.md — project architecture and implementation rules"
   ],
-  "map": [
-    {
-      "name": "PDF import and parsing",
-      "files": [
-        "desktop/ingest/extract.ts",
-        "desktop/ingest/analyze.ts",
-        "desktop/ingest/pdf.ts",
-        "desktop/ingest/worker.ts"
-      ]
-    },
-    {
-      "name": "Textbook structure and concepts",
-      "files": [
-        "desktop/ingest/units.ts",
-        "desktop/ingest/concepts.ts",
-        "desktop/knowledge/terms.ts",
-        "desktop/knowledge/graph.ts"
-      ]
-    },
-    {
-      "name": "Reader text and selection",
-      "files": [
-        "web/src/lib/text.ts",
-        "web/src/lib/selection.ts",
-        "web/src/lib/format.ts",
-        "web/src/components/ui.tsx"
-      ]
-    },
-    {
-      "name": "AI questions and rewrites",
-      "files": [
-        "desktop/ai.ts",
-        "desktop/context.ts",
-        "web/src/lib/markdown.ts"
-      ]
-    },
-    {
-      "name": "Library and storage",
-      "files": [
-        "desktop/library.ts",
-        "desktop/db.ts"
-      ]
-    },
-    {
-      "name": "Flashcard reviews",
-      "files": [
-        "desktop/srs.ts"
-      ]
-    },
-    {
-      "name": "PDF rendering",
-      "files": [
-        "desktop/render.ts",
-        "desktop/render-worker.ts"
-      ]
-    },
-    {
-      "name": "Sketches",
-      "files": [
-        "desktop/sketches.ts"
-      ]
-    },
-    {
-      "name": "Desktop IPC",
-      "files": [
-        "shared/api.ts",
-        "shared/types.ts",
-        "desktop/main.ts",
-        "desktop/preload.ts"
-      ]
-    },
-    {
-      "name": "Interface state and appearance",
-      "files": [
-        "web/src/store.ts",
-        "web/src/api.ts",
-        "web/src/styles/base.css"
-      ]
-    },
-    {
-      "name": "Build and parsing tools",
-      "files": [
-        "scripts/build-main.ts",
-        "scripts/parse.ts"
-      ]
-    }
-  ]
+  "run": [
+    "bun install — install dependencies",
+    "bun run dev — run Vite, esbuild watch, and Electron",
+    "bun run dev -- --data-dir=/tmp/lib — develop with a scratch library",
+    "bun run typecheck && bun run test — check types and run desktop tests",
+    "bun scripts/parse.ts book.pdf --dump out.md --concepts — inspect a PDF import",
+    "bun run build — build the web and main processes",
+    "make — build, package, install, and launch",
+    "make update — replace and relaunch the installed app"
+  ],
+  "conventions": [
+    "Use Bun for installation, scripts, and tests; yagami is a sibling file dependency at ../yagami.",
+    "Add API calls in shared/api.ts, the desktop implementation, and web/src/api.ts.",
+    "Keep SQLite user_version migrations append-only.",
+    "Tune import heuristics against real books with scripts/parse.ts and keep desktop/test/parse.test.ts passing.",
+    "Keep selectable block text solely in its data-text element; selection offsets count displayed characters.",
+    "Keep the book text beside custom_text, and offer rewrites without pushing them.",
+    "Cap mastery earned from reading alone; reviewed-card recall comes from FSRS retrievability.",
+    "Re-run the dataviz validator if knowledge-state colors change."
+  ],
+  "builtAt": "95fe0bd"
 }
