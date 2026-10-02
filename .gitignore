@@ -1,0 +1,6 @@
+node_modules/
+dist-web/
+dist-electron/
+dist-app/
+*.log
+.DS_Store
