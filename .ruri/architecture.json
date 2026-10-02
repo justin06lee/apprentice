@@ -188,7 +188,9 @@
     "web/src/views/map/ — knowledge map and layout worker",
     "web/src/views/sketch/ — drawing canvas and rendering",
     "web/src/ — app shell, store, API proxy, components, and styles",
-    "scripts/ — development, main-process build, and PDF inspection",
+    "scripts/ — development, builds, icon generation, and PDF inspection",
+    "assets/ — generated app icon SVG",
+    "build/ — packaged app icons and platform icon sizes",
     "Makefile — packaging, installation, updates, and launch",
     "CLAUDE.md — project architecture and implementation rules"
   ],
@@ -212,5 +214,247 @@
     "Cap mastery earned from reading alone; reviewed-card recall comes from FSRS retrievability.",
     "Re-run the dataviz validator if knowledge-state colors change."
   ],
+  "layerSheets": {
+    "app-shell": {
+      "summary": "The app shell mounts the React app, selects the current view, and owns navigation, library, settings, overlays, and app-wide state. Zustand holds routes, books, settings, jobs, and toasts; view-specific state stays in the views. Shared UI and CSS tokens give the screens a consistent interface.",
+      "map": [
+        {
+          "name": "Navigation and view switching",
+          "files": [
+            "web/src/App.tsx",
+            "web/src/store.ts"
+          ]
+        },
+        {
+          "name": "Library and book imports",
+          "files": [
+            "web/src/views/library/Library.tsx",
+            "web/src/store.ts",
+            "web/src/styles/library.css"
+          ]
+        },
+        {
+          "name": "Settings and themes",
+          "files": [
+            "web/src/views/settings/Settings.tsx",
+            "web/src/App.tsx",
+            "web/src/styles/settings.css",
+            "web/src/styles/base.css"
+          ]
+        },
+        {
+          "name": "Command palette and search",
+          "files": [
+            "web/src/views/CommandPalette.tsx",
+            "web/src/App.tsx"
+          ]
+        },
+        {
+          "name": "Shared dialogs, popovers, and toasts",
+          "files": [
+            "web/src/components/ui.tsx",
+            "web/src/store.ts"
+          ]
+        },
+        {
+          "name": "Renderer API access",
+          "files": [
+            "web/src/api.ts",
+            "web/src/store.ts"
+          ]
+        },
+        {
+          "name": "Shell layout and screen styling",
+          "files": [
+            "web/src/styles/app.css",
+            "web/src/styles/base.css"
+          ]
+        }
+      ],
+      "flows": [
+        {
+          "name": "Navigation",
+          "steps": [
+            "A rail or palette action calls the store's navigation method.",
+            "The store updates the route and history.",
+            "App renders the selected view."
+          ]
+        },
+        {
+          "name": "App state updates",
+          "steps": [
+            "A view calls a store action.",
+            "The action uses the renderer API where needed.",
+            "Zustand updates shared state and subscribed UI renders."
+          ]
+        }
+      ],
+      "files": [
+        "web/src/App.tsx — shell layout, route rendering, theme application, and overlays",
+        "web/src/store.ts — app-wide Zustand state and navigation",
+        "web/src/api.ts — renderer API access and error helpers",
+        "web/src/views/library/Library.tsx — book shelf, progress, and import controls",
+        "web/src/views/settings/Settings.tsx — reading, AI, and review settings",
+        "web/src/views/CommandPalette.tsx — actions, navigation, and passage search",
+        "web/src/components/ui.tsx — shared popovers, modals, toasts, rings, and switches",
+        "web/src/styles/base.css — theme tokens and base design system",
+        "web/src/styles/app.css — rail, view, and overlay layout",
+        "web/src/main.tsx — React entry point"
+      ],
+      "rules": [
+        "Keep app-wide state in web/src/store.ts; per-view state belongs in its view.",
+        "Shared components draw their colors and measurements from the tokens in web/src/styles/base.css.",
+        "Draggable window regions need interactive controls marked as no-drag.",
+        "Route changes must account for the store's history used by back navigation."
+      ],
+      "edges": [
+        "Reader — App renders the reader route; the palette uses reader state and search presentation.",
+        "Study tools — App renders review; shared styles cover panels and review screens.",
+        "Visual canvases — App renders the knowledge map; shared styles cover map and sketch screens.",
+        "IPC contract — store and API access use shared book, settings, job, and status types.",
+        "Desktop bridge — renderer API calls reach desktop services through the exposed bridge."
+      ]
+    },
+    "desktop-bridge": {
+      "summary": "The Electron main process owns the window, database, workers, desktop services, and a single IPC door for the renderer. The preload exposes only an RPC call, an event stream, dropped-file paths, and the platform. Keep that boundary in mind when changing what the window can access.",
+      "map": [
+        {
+          "name": "Window and desktop startup",
+          "files": [
+            "desktop/main.ts"
+          ]
+        },
+        {
+          "name": "Renderer API and events",
+          "files": [
+            "desktop/main.ts",
+            "desktop/preload.ts"
+          ]
+        },
+        {
+          "name": "Dropped-file paths",
+          "files": [
+            "desktop/preload.ts"
+          ]
+        },
+        {
+          "name": "App and asset protocols",
+          "files": [
+            "desktop/main.ts"
+          ]
+        }
+      ],
+      "flows": [
+        {
+          "name": "Renderer RPC",
+          "steps": [
+            "The window calls the API exposed by desktop/preload.ts",
+            "The preload invokes the rpc IPC channel",
+            "desktop/main.ts handles the call through its IPC door"
+          ]
+        },
+        {
+          "name": "Main-process events",
+          "steps": [
+            "desktop/main.ts sends an event",
+            "desktop/preload.ts receives it on the event IPC channel",
+            "The preload calls the registered listener and provides a way to remove it"
+          ]
+        }
+      ],
+      "files": [
+        "desktop/main.ts — creates the window and connects IPC to the database, workers, and desktop services",
+        "desktop/preload.ts — exposes the window's limited main-process API"
+      ],
+      "rules": [
+        "Register the apprentice:// and app:// protocols before Electron is ready.",
+        "The app:// window origin allows Chromium to start the map's module worker; file:// has an opaque origin.",
+        "Remove an event listener through the cleanup function returned by onEvent."
+      ],
+      "edges": [
+        "IPC contract — desktop/main.ts imports the shared Api and Events types",
+        "App shell — desktop/preload.ts exposes the API used by the window",
+        "Library and storage — desktop/main.ts opens the database and connects library and sketch services",
+        "PDF import and rendering — desktop/main.ts connects the page renderer",
+        "Learning and AI services — desktop/main.ts connects scheduling, knowledge, and AI services"
+      ]
+    },
+    "build-tooling": {
+      "summary": "This layer runs development, bundles Electron code and workers, generates icons, and provides tools for inspecting PDF imports and supporting Linux installs. Bun drives the scripts; esbuild builds code outside the renderer while Vite serves the development window. A newcomer should know that renderer reloads automatically in development, but changes to desktop code require an app restart.",
+      "map": [
+        {
+          "name": "Electron bundle and workers",
+          "files": [
+            "scripts/build-main.ts"
+          ]
+        },
+        {
+          "name": "Development startup",
+          "files": [
+            "scripts/dev.ts",
+            "scripts/build-main.ts"
+          ]
+        },
+        {
+          "name": "PDF parser inspection",
+          "files": [
+            "scripts/parse.ts"
+          ]
+        },
+        {
+          "name": "App icon",
+          "files": [
+            "scripts/icon.ts",
+            "scripts/render-icon.mjs"
+          ]
+        },
+        {
+          "name": "Linux sandbox setup",
+          "files": [
+            "scripts/apparmor.sh"
+          ]
+        }
+      ],
+      "flows": [
+        {
+          "name": "Development startup",
+          "steps": [
+            "scripts/dev.ts starts the esbuild watcher",
+            "It starts Vite",
+            "It waits for the main bundle and Vite",
+            "It starts Electron pointed at Vite"
+          ]
+        },
+        {
+          "name": "Icon generation",
+          "steps": [
+            "scripts/icon.ts writes the SVG",
+            "scripts/render-icon.mjs rasterizes it with Electron",
+            "The PNGs supply the packaged icon and Linux icon sizes"
+          ]
+        }
+      ],
+      "files": [
+        "scripts/build-main.ts — bundles Electron main, preload, and workers into dist-electron and copies MuPDF WASM beside the workers",
+        "scripts/dev.ts — starts the development watchers and Electron",
+        "scripts/parse.ts — runs the PDF parser on a file and prints results without changing the library",
+        "scripts/icon.ts — generates the app icon SVG",
+        "scripts/render-icon.mjs — renders the SVG into packaged PNG icon sizes",
+        "scripts/apparmor.sh — installs a Linux AppArmor profile that permits the Electron sandbox to start"
+      ],
+      "rules": [
+        "The sandboxed preload must be CommonJS.",
+        "MuPDF WASM must sit beside the workers because its loader looks beside the importing module.",
+        "Restart the development app after desktop code changes; window changes reload automatically.",
+        "Keep the Electron sandbox enabled when addressing Linux startup failures."
+      ],
+      "edges": [
+        "App shell — Vite serves the renderer during development.",
+        "Desktop bridge — esbuild bundles main and preload.",
+        "PDF import and rendering — esbuild bundles workers, and the parser inspection script calls ingestion code.",
+        "Desktop runtime — Electron runs the development app and rasterizes icons."
+      ]
+    }
+  },
   "builtAt": "95fe0bd"
 }
