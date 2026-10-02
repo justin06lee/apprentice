@@ -9,6 +9,7 @@ Electron desktop app for studying textbook PDFs. Vite + React 19 + zustand rende
 - `desktop/` — main process. `db.ts` migrations are append-only (`user_version`).
 - `web/src/views/reader/UnitView.tsx` — the reading column; pointer handling is delegated from the column, reading is tracked with one IntersectionObserver.
 - `web/src/views/sketch/`, `web/src/views/map/GraphCanvas.tsx` — self-contained canvas components (sketch pad, force-directed map with its layout in a worker).
+- The icon is generated: `scripts/icon.ts` draws `assets/apprentice.svg` (seeded, so reruns are identical) and `bun run icon` rasterizes it with Electron into `build/icon.png` and `build/icons/`. Edit the script, not the SVG.
 
 ## Load-bearing decisions
 

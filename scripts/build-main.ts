@@ -7,6 +7,7 @@
  *                       preload has to be CommonJS)
  *   ingest-worker.mjs   PDF → blocks, run once per import on its own thread
  *   render-worker.mjs   original-page rendering, kept warm for the page view
+ *   icon.png            the window's icon
  *
  * Bundling means the packaged app ships no node_modules. The one file that
  * cannot be bundled is MuPDF's WebAssembly, which its loader looks for
@@ -65,6 +66,8 @@ const targets: BuildOptions[] = [
 fs.mkdirSync(out, { recursive: true });
 const wasm = path.join(root, "node_modules", "mupdf", "dist", "mupdf-wasm.wasm");
 fs.copyFileSync(wasm, path.join(out, "mupdf-wasm.wasm"));
+// The window's own icon (taskbar, alt-tab, a dev dock), beside main.mjs.
+fs.copyFileSync(path.join(root, "build", "icons", "512x512.png"), path.join(out, "icon.png"));
 
 if (watch) {
   for (const options of targets) await (await context(options)).watch();

@@ -289,6 +289,8 @@ async function main(): Promise<void> {
       title: "apprentice",
       backgroundColor: background(),
       autoHideMenuBar: true,
+      // macOS takes the icon from the bundle; everywhere else the window carries it.
+      ...(process.platform === "darwin" ? {} : { icon: path.join(here, "icon.png") }),
       ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 16, y: 18 } } : {}),
       webPreferences: {
         preload: path.join(here, "preload.cjs"),
@@ -342,6 +344,8 @@ async function main(): Promise<void> {
     ]),
   );
 
+  // A development run is Electron's own bundle; give its dock tile the hat.
+  if (process.platform === "darwin" && !app.isPackaged) app.dock?.setIcon(path.join(here, "icon.png"));
   createWindow();
   library.resume();
   void ai.status();

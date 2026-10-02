@@ -18,7 +18,8 @@
     "start": "electron .",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json --noEmit",
     "test": "bun test desktop",
-    "parse": "bun scripts/parse.ts"
+    "parse": "bun scripts/parse.ts",
+    "icon": "bun scripts/icon.ts && electron scripts/render-icon.mjs --no-sandbox"
   },
   "dependencies": {},
   "devDependencies": {
@@ -64,17 +65,25 @@
     ],
     "npmRebuild": false,
     "linux": {
-      "target": [{
-        "target": "dir"
-      }],
-      "category": "Education"
+      "target": [
+        {
+          "target": "dir"
+        }
+      ],
+      "category": "Education",
+      "icon": "build/icons"
     },
     "mac": {
-      "target": [{
-        "target": "dir",
-        "arch": ["arm64"]
-      }],
-      "category": "public.app-category.education"
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.education",
+      "icon": "build/icon.png"
     }
   },
   "trustedDependencies": [

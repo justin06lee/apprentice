@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/apprentice.svg" alt="apprentice" width="96" />
+<img src="assets/apprentice.svg" alt="apprentice" width="168" />
 
 # apprentice
 
@@ -47,6 +47,7 @@ bun run dev                          # Vite + esbuild watch + Electron
 bun run dev -- --data-dir=/tmp/lib   # with a scratch library
 bun run typecheck && bun run test    # APPRENTICE_TEST_PDF=thinkpython2.pdf adds a real-book parse test
 bun scripts/parse.ts book.pdf --dump out.md --concepts   # what the importer makes of a PDF
+bun run icon                         # redraw the icon (scripts/icon.ts) and every PNG size in build/
 ```
 
 | | |
