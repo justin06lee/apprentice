@@ -1,0 +1,91 @@
+/*
+ * The knowledge map (GraphCanvas). The canvas paints everything itself from
+ * the theme tokens; CSS only sizes it and draws the legend over it.
+ */
+
+.gc-root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--paper);
+  /* The canvas is absolutely placed, so nothing inside can resize or repaint the page around it. */
+  contain: strict;
+}
+
+.gc-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* Pointer events drive pan, zoom and node drags; the browser must not scroll or zoom the page instead. */
+  touch-action: none;
+}
+
+.gc-legend {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: calc(100% - 24px);
+  padding: 7px 10px;
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  color: var(--ink-2);
+  font-size: 11.5px;
+  line-height: 1.3;
+  pointer-events: none;
+}
+
+.gc-legend-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.gc-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.gc-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+/* Hollow, as on the map: what you haven't met yet. */
+.gc-dot-unseen {
+  background: var(--paper);
+  box-shadow: inset 0 0 0 1.5px var(--m-unseen);
+}
+.gc-dot-seen {
+  background: var(--m-seen);
+}
+.gc-dot-learning {
+  background: var(--m-learning);
+}
+.gc-dot-known {
+  background: var(--m-known);
+}
+.gc-dot-fading {
+  background: var(--m-fading);
+}
+
+.gc-ramp {
+  width: 64px;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--m-unseen), var(--m-learning), var(--m-known));
+}
+
+.gc-hint {
+  color: var(--ink-3);
+  font-size: 11px;
+}

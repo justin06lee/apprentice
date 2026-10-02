@@ -1,0 +1,117 @@
+.settings {
+  height: 100%;
+  overflow-y: auto;
+}
+.settings-inner {
+  width: min(760px, 100% - 48px);
+  margin: 0 auto;
+  padding: 36px 0 80px;
+}
+.settings h1 {
+  margin: 0 0 18px;
+  font-size: 28px;
+  font-weight: 680;
+  letter-spacing: -0.02em;
+}
+.settings section {
+  margin-bottom: 26px;
+  padding: 6px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+}
+.settings h2 {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.set-row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.set-row:last-child {
+  border-bottom: none;
+}
+.set-text {
+  flex: 1;
+  min-width: 0;
+}
+.set-title {
+  font-weight: 560;
+}
+.set-hint {
+  margin-top: 2px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.set-control {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  max-width: 340px;
+}
+.set-control select.input {
+  width: 300px;
+  height: 34px;
+  cursor: pointer;
+}
+.set-control input[type="range"] {
+  width: 220px;
+  accent-color: var(--accent);
+}
+.set-block {
+  display: grid;
+  gap: 8px;
+  padding: 14px 0 16px;
+}
+.ai-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 10px 0 6px;
+  padding: 14px;
+  border-radius: 12px;
+}
+.ai-status p {
+  margin: 3px 0 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.ai-status.ok {
+  background: var(--good-soft);
+  color: var(--good);
+}
+.ai-status.off {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.ai-status strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.keys {
+  display: grid;
+  gap: 10px;
+  padding: 10px 0 16px;
+}
+.key-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.key-row .kbd {
+  min-width: 120px;
+  justify-content: center;
+  height: 22px;
+  font-size: 11.5px;
+}

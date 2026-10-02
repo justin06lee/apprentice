@@ -1,0 +1,176 @@
+/*
+ * The sketch pad. The canvas fills the pad; the dot grid is a CSS background
+ * the engine slides and scales with the view, so it follows the theme with
+ * no repaint of its own.
+ */
+
+.sk-pad {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface);
+  contain: content;
+}
+.sk-pad:focus-visible {
+  outline: 2px solid var(--accent-line);
+  outline-offset: -2px;
+}
+
+.sk-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(circle, var(--line-strong) 1px, transparent 1.5px);
+}
+
+.sk-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+/* ── floating controls ──────────────────────────────────────────────────── */
+
+.sk-toolbar,
+.sk-zoom {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.sk-toolbar {
+  top: 10px;
+  left: 10px;
+  max-width: calc(100% - 20px);
+  flex-wrap: wrap;
+  gap: 4px 9px;
+  padding: 4px;
+  overflow: hidden;
+}
+.sk-zoom {
+  right: 10px;
+  bottom: 10px;
+  gap: 2px;
+  padding: 3px;
+}
+.sk-group {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+/*
+ * Each group's divider sits in the gap before it. The first group of every
+ * row puts it outside the toolbar, where overflow clips it, so a wrapped
+ * toolbar never shows a stray rule at a row's edge.
+ */
+.sk-group::before {
+  content: "";
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  left: -5px;
+  width: 1px;
+  background: var(--line);
+}
+.sk-pad .icon-btn:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.sk-swatch {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  cursor: pointer;
+  transition: background var(--fast) var(--ease);
+}
+.sk-swatch:hover {
+  background: var(--surface-2);
+}
+.sk-swatch span {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 14%, transparent);
+  transition:
+    transform var(--fast) var(--ease),
+    box-shadow var(--fast) var(--ease);
+}
+.sk-swatch:active span {
+  transform: scale(0.88);
+}
+.sk-swatch.on span {
+  box-shadow:
+    0 0 0 2px var(--surface),
+    0 0 0 3.5px var(--accent);
+}
+
+.sk-weight i {
+  display: block;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.sk-zoom-level {
+  min-width: 44px;
+  height: 26px;
+  padding: 0 4px;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  font-weight: 520;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition:
+    background var(--fast) var(--ease),
+    color var(--fast) var(--ease);
+}
+.sk-zoom-level:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+/*
+ * The label being typed. One line box of exactly 1em, scaled with the view
+ * from its top-left, so the committed canvas text lands on the same pixels.
+ */
+.sk-text,
+.sk-text:focus-visible {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  height: 1em;
+  min-width: 1ch;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: var(--font-ui);
+  font-weight: 400;
+  font-feature-settings: normal;
+  line-height: 1;
+  field-sizing: content;
+  transform-origin: 0 0;
+  outline: 1px dashed var(--accent-line);
+  outline-offset: 3px;
+  caret-color: var(--accent);
+  user-select: text;
+}

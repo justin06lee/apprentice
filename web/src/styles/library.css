@@ -1,0 +1,291 @@
+.library {
+  height: 100%;
+  overflow: auto;
+  padding: 36px clamp(24px, 4vw, 56px) 60px;
+}
+
+.library-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  max-width: 1320px;
+  margin: 0 auto 26px;
+}
+.library-head h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 680;
+  letter-spacing: -0.02em;
+}
+.library-head p {
+  margin: 4px 0 0;
+}
+
+.hero {
+  display: flex;
+  gap: 28px;
+  max-width: 1320px;
+  margin: 0 auto 38px;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  box-shadow: var(--shadow-s);
+  cursor: pointer;
+  transition:
+    box-shadow var(--mid) var(--ease),
+    transform var(--mid) var(--ease);
+  animation: rise-in var(--slow) var(--ease);
+}
+.hero:hover {
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
+.hero-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+}
+.hero-body h2 {
+  margin: 2px 0 0;
+  font: 600 26px/1.2 var(--font-serif);
+  letter-spacing: -0.01em;
+}
+.hero-body p {
+  margin: 0;
+}
+.hero-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 420px;
+  margin-top: 10px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+.hero-progress .progress-bar {
+  flex: 1;
+}
+.hero-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.shelf {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 30px 26px;
+  max-width: 1320px;
+  margin: 0 auto;
+}
+
+.cover {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  object-position: top;
+  border-radius: 6px 10px 10px 6px;
+  background: var(--surface-2);
+  box-shadow:
+    inset 3px 0 0 rgba(0, 0, 0, 0.06),
+    var(--shadow);
+}
+.cover-l {
+  width: 128px;
+  flex: none;
+}
+.cover-made {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 14% 12%;
+  background: linear-gradient(160deg, hsl(var(--hue) 38% 42%), hsl(calc(var(--hue) + 30) 42% 28%));
+  color: #fff;
+  font: 600 15px/1.25 var(--font-serif);
+  overflow: hidden;
+}
+.cover-made small {
+  font: 500 11px var(--font-ui);
+  opacity: 0.8;
+}
+.cover-l.cover-made {
+  font-size: 13px;
+}
+
+.book {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  cursor: pointer;
+  outline: none;
+  animation: rise-in var(--slow) var(--ease) both;
+}
+.book-cover {
+  position: relative;
+  transition: transform var(--mid) var(--ease);
+}
+.book:hover .book-cover,
+.book:focus-visible .book-cover {
+  transform: translateY(-3px);
+}
+.book:hover .cover {
+  box-shadow:
+    inset 3px 0 0 rgba(0, 0, 0, 0.06),
+    var(--shadow-l);
+}
+.book-veil {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  border-radius: 6px 10px 10px 6px;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  backdrop-filter: blur(3px);
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 560;
+}
+.book-veil.bad {
+  color: var(--bad);
+}
+.book.importing,
+.book.failed {
+  cursor: default;
+}
+.book-due {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 11px;
+  font-weight: 650;
+  box-shadow: var(--shadow);
+}
+.book-meta {
+  display: grid;
+  gap: 3px;
+  padding-right: 22px;
+}
+.book-title {
+  font-weight: 620;
+  font-size: 13.5px;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.book-sub {
+  color: var(--ink-3);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.book-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.book-progress .progress-bar {
+  flex: 1;
+  height: 3px;
+}
+.book-menu {
+  position: absolute;
+  right: -6px;
+  bottom: 22px;
+  opacity: 0;
+  transition: opacity var(--fast);
+}
+.book:hover .book-menu,
+.book-menu:focus-visible {
+  opacity: 1;
+}
+
+.book-add {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  aspect-ratio: 3 / 4;
+  border: 1.5px dashed var(--line-strong);
+  border-radius: 6px 10px 10px 6px;
+  background: transparent;
+  color: var(--ink-3);
+  font-weight: 560;
+  cursor: pointer;
+  transition:
+    border-color var(--fast),
+    color var(--fast),
+    background var(--fast);
+}
+.book-add:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.library-empty {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  max-width: 520px;
+  margin: 12vh auto 0;
+  text-align: center;
+  animation: rise-in var(--slow) var(--ease);
+}
+.library-empty-art {
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  margin-bottom: 6px;
+  border-radius: 24px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.library-empty h1 {
+  margin: 0;
+  font: 600 28px/1.2 var(--font-serif);
+}
+.library-empty p {
+  margin: 0 0 10px;
+  color: var(--ink-2);
+  line-height: 1.6;
+}
+
+.dialog {
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+}
+.dialog h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.dialog p {
+  margin: 0;
+  line-height: 1.55;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
