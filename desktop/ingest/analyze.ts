@@ -1,6 +1,8 @@
 /**
  * Book analysis: every page's lines, images and shapes → the blocks and
- * sections apprentice reads from.
+ * sections behind the pages: chapters, progress, search, concepts and the
+ * model's context. The reader reads the PDF's own pages; nothing here
+ * decides how anything looks.
  *
  * Runs once per import, over the whole book at once, because almost every
  * decision is relative to the rest of the book. "Body text" is whichever
@@ -11,8 +13,8 @@
  *   1. furniture   running heads, footers and page numbers are dropped
  *   2. regions     figures (images and drawn diagrams, with their labels),
  *                  boxed callouts, and tables become regions of the page
- *   3. equations   display math becomes a region too — rendered, not
- *                  reflowed, because reflowed math is unreadable
+ *   3. equations   display math becomes a region too, kept apart from the
+ *                  prose around it
  *   4. footnotes   small text at the foot of a page, opened by a marker,
  *                  linked back to the superscript that refers to it
  *   5. headings    the PDF outline when it has one, matched to the lines it
@@ -21,8 +23,9 @@
  *                  columns and page breaks, hyphenation undone where the
  *                  book itself spells the word without one
  *
- * Every region that is shown as an image is described by an AssetRequest;
- * the worker renders those from the page afterwards.
+ * Regions carry an AssetRequest — where on the page they are drawn — from
+ * when the import cut them out as pictures; it no longer does, but the
+ * request still marks a block as a picture rather than prose.
  */
 import type { BlockType, Mark, SectionKind } from "../../shared/types.js";
 import { F, type FontInfo, type Rect, type XLine, type XPage } from "./extract.js";

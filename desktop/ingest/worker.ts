@@ -6,9 +6,12 @@
  *
  *   extract   every page read once (most of the time goes here)
  *   analyze   structure, regions, paragraphs
- *   render    figures, tables and display math cut from their pages
  *   concepts  terms, mentions, links, first cards
  *   save      one transaction
+ *
+ * The book is read on its own pages, so nothing here decides how it looks:
+ * the structure found is what chapters, progress, search, concepts and the
+ * model's context are made of.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -18,7 +21,7 @@ import { openDb, tx } from "../db.js";
 import { analyze } from "./analyze.js";
 import { extractConcepts } from "./concepts.js";
 import { Extractor, type XPage } from "./extract.js";
-import { meta, openPdf, readOutline, renderPage, renderRegion } from "./pdf.js";
+import { meta, openPdf, readOutline, renderPage } from "./pdf.js";
 import { blockWeight, planUnits } from "./units.js";
 
 export interface IngestJob {
@@ -37,7 +40,7 @@ const job = workerData as IngestJob;
 const post = (m: IngestMessage) => parentPort!.postMessage(m);
 
 /** Most of an import is reading pages; the rest share what is left. */
-const STAGES = { extract: [0, 0.62], analyze: [0.62, 0.68], render: [0.68, 0.9], concepts: [0.9, 0.94], save: [0.94, 1] } as const;
+const STAGES = { extract: [0, 0.8], analyze: [0.8, 0.88], concepts: [0.88, 0.94], save: [0.94, 1] } as const;
 let lastPost = 0;
 function progress(stage: keyof typeof STAGES, fraction: number, force = false) {
   const now = Date.now();
@@ -63,45 +66,12 @@ function run(): string[] {
   progress("analyze", 0, true);
   const book = analyze(pages, ex.fonts, outline, info);
   const plan = planUnits(book.sections, book.blocks, count);
-  progress("render", 0, true);
-
   const db = openDb(job.dbPath);
   const baseBlock = Number((db.prepare("select coalesce(max(id), 0) as m from blocks").get() as { m: number }).m) + 1;
   const baseSection = Number((db.prepare("select coalesce(max(id), 0) as m from sections").get() as { m: number }).m) + 1;
   const blockId = (i: number) => baseBlock + i;
   const sectionId = (i: number) => baseSection + i;
 
-  // Images: cut from the page at a resolution that stays sharp on a HiDPI
-  // screen at the reader's type size, capped so a full-page plate does not
-  // become a 20-megapixel file.
-  const assets = path.join(job.dir, "assets");
-  fs.mkdirSync(assets, { recursive: true });
-  const assetOf = new Map<number, { name: string; width: number; height: number }>();
-  const withAssets = book.blocks.map((b, i) => [b, i] as const).filter(([b]) => b.asset);
-  let page: ReturnType<typeof doc.loadPage> | null = null;
-  let pageIndex = -1;
-  withAssets.forEach(([b, i], n) => {
-    const a = b.asset!;
-    if (a.page !== pageIndex) {
-      page?.destroy();
-      page = doc.loadPage(a.page);
-      pageIndex = a.page;
-    }
-    const w = a.bbox[2] - a.bbox[0];
-    const h = a.bbox[3] - a.bbox[1];
-    const scale = Math.min(a.scale, 2600 / Math.max(w, 1), 3200 / Math.max(h, 1));
-    try {
-      const photo = a.photo;
-      const img = renderRegion(page!, a.bbox, scale, photo ? "jpeg" : "png", a.kind === "equation");
-      const name = `${blockId(i)}.${photo ? "jpg" : "png"}`;
-      fs.writeFileSync(path.join(assets, name), img.data);
-      assetOf.set(i, { name, width: Math.round(w * 10) / 10, height: Math.round(h * 10) / 10 });
-    } catch {
-      // A region MuPDF cannot draw keeps its text; the block shows that instead.
-    }
-    progress("render", (n + 1) / withAssets.length);
-  });
-  (page as ReturnType<typeof doc.loadPage> | null)?.destroy();
   try {
     const first = doc.loadPage(0);
     const [x0, , x1] = first.getBounds();
@@ -162,7 +132,6 @@ function run(): string[] {
        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     book.blocks.forEach((b, i) => {
-      const asset = assetOf.get(i);
       const refs: Mark[] = (b.refs ?? []).flatMap((r) => {
         const id = footnoteIds.get(r.key);
         return id ? [{ s: r.s, e: r.e, f: 8, ref: id }] : [];
@@ -179,9 +148,9 @@ function run(): string[] {
         b.marks.length ? JSON.stringify(b.marks) : null,
         b.page,
         b.bbox ? JSON.stringify(b.bbox.map((v) => Math.round(v * 10) / 10)) : null,
-        asset?.name ?? null,
-        asset?.width ?? 0,
-        asset?.height ?? 0,
+        null,
+        0,
+        0,
         b.boxed,
         b.label,
         refs.length ? JSON.stringify(refs) : null,
@@ -217,12 +186,12 @@ function run(): string[] {
       insEdge.run(Math.min(a, b), Math.max(a, b), job.bookId, e.weight);
     }
     const insCard = db.prepare(
-      `insert into cards (book_id, block_id, unit_id, kind, front, back, source, status, due, created_at)
-       values (?, ?, ?, ?, ?, ?, 'auto', 'pending', ?, ?)`,
+      `insert into cards (book_id, block_id, unit_id, page, kind, front, back, source, status, due, created_at)
+       values (?, ?, ?, ?, ?, ?, ?, 'auto', 'pending', ?, ?)`,
     );
     const insCardConcept = db.prepare("insert into card_concepts (card_id, concept_id) values (?, ?) on conflict do nothing");
     for (const c of found.cards) {
-      const r = insCard.run(job.bookId, blockId(c.block), sectionId(unitIndexOf[c.block]!), c.kind, c.front, c.back, now, now);
+      const r = insCard.run(job.bookId, blockId(c.block), sectionId(unitIndexOf[c.block]!), book.blocks[c.block]!.page, c.kind, c.front, c.back, now, now);
       for (const key of c.concepts) {
         const id = ids.get(key);
         if (id !== undefined) insCardConcept.run(Number(r.lastInsertRowid), id);

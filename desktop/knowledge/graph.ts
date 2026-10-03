@@ -175,7 +175,7 @@ export class Knowledge {
 
     const mentionRows = db
       .prepare(
-        `select m.block_id, m.book_id, m.unit_id, m.is_def, coalesce(b.custom_text, b.text) as text, k.title as book_title,
+        `select m.block_id, m.book_id, m.unit_id, m.is_def, b.page, b.text, k.title as book_title,
            u.title as unit_title, (r.block_id is not null) as read
          from mentions m join blocks b on b.id = m.block_id join books k on k.id = m.book_id join sections u on u.id = m.unit_id
          left join reads r on r.block_id = m.block_id
@@ -193,6 +193,7 @@ export class Knowledge {
         bookTitle: String(r["book_title"]),
         blockId: Number(r["block_id"]),
         unitId: Number(r["unit_id"]),
+        page: Number(r["page"]),
         unitTitle: String(r["unit_title"]),
         snippet: `${from ? "…" : ""}${text.slice(from, to)}${to < text.length ? "…" : ""}`,
         isDefinition: Number(r["is_def"]) === 1,

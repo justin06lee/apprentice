@@ -259,6 +259,58 @@ const MIGRATIONS: string[] = [
     value text not null
   );
   `,
+  // 2 — the book is read on its own pages. Everything the reader leaves
+  // behind is anchored to a page and a range of that page's text layer
+  // (shared/pages.ts); block ids stay where they are useful, for the
+  // chapter a thing belongs to. Highlights and rewrites made on the old
+  // reflowed text keep their words and are placed on their page the first
+  // time the book is opened (start = -1 until then).
+  `
+  alter table highlights add column page integer;
+  update highlights set page = (select b.page from blocks b where b.id = highlights.block_id), start = -1, end = -1;
+  create index highlights_page on highlights(book_id, page);
+
+  create table versions (
+    id integer primary key,
+    book_id text not null references books(id) on delete cascade,
+    page integer not null,
+    start integer not null,
+    end integer not null,
+    -- The book's words the version stands in for.
+    quote text not null,
+    text text not null,
+    source text not null,
+    created_at integer not null,
+    updated_at integer not null
+  );
+  create index versions_page on versions(book_id, page);
+  insert into versions (book_id, page, start, end, quote, text, source, created_at, updated_at)
+    select book_id, page, -1, -1, text, custom_text, coalesce(custom_source, 'user'), coalesce(custom_at, 0), coalesce(custom_at, 0)
+    from blocks where custom_text is not null;
+
+  alter table sketches add column page integer;
+  -- Where on the page the sketch is pinned, in points from the top.
+  alter table sketches add column y real;
+  update sketches set page = (select b.page from blocks b where b.id = sketches.block_id);
+
+  alter table cards add column page integer;
+  update cards set page = (select b.page from blocks b where b.id = cards.block_id);
+
+  alter table chats add column page integer;
+  update chats set page = (select b.page from blocks b where b.id = chats.block_id);
+  alter table chat_messages add column page integer;
+  alter table chat_messages add column start integer;
+  alter table chat_messages add column end integer;
+  update chat_messages set page = (select b.page from blocks b where b.id = chat_messages.block_id);
+
+  create table page_reads (
+    book_id text not null references books(id) on delete cascade,
+    page integer not null,
+    at integer not null,
+    dwell_ms integer not null default 0,
+    primary key (book_id, page)
+  );
+  `,
 ];
 
 export function openDb(file: string): Db {

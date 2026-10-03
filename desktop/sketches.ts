@@ -1,9 +1,11 @@
 /**
  * Sketches: drawings the reader makes beside the text, kept as strokes (so
- * they stay editable) with an SVG rendering for thumbnails.
+ * they stay editable) with an SVG rendering for thumbnails. A sketch can be
+ * pinned to a page, at a height, and shows in that page's margin.
  */
 import type { Sketch, SketchData } from "../shared/types.js";
 import type { Ctx } from "./context.js";
+import { unitAt } from "./library.js";
 
 function fromRow(r: Record<string, unknown>): Sketch {
   let data: SketchData = { version: 1, strokes: [] };
@@ -15,7 +17,8 @@ function fromRow(r: Record<string, unknown>): Sketch {
   return {
     id: Number(r["id"]),
     bookId: String(r["book_id"]),
-    blockId: r["block_id"] === null ? null : Number(r["block_id"]),
+    page: r["page"] === null ? null : Number(r["page"]),
+    y: r["y"] === null ? null : Number(r["y"]),
     unitId: r["unit_id"] === null ? null : Number(r["unit_id"]),
     title: String(r["title"]),
     data,
@@ -40,18 +43,19 @@ export class Sketches {
     return fromRow(r);
   }
 
-  save(input: { id?: number; bookId: string; blockId: number | null; unitId: number | null; title: string; data: SketchData; svg: string }): Sketch {
+  save(input: { id?: number; bookId: string; page: number | null; y: number | null; title: string; data: SketchData; svg: string }): Sketch {
     const now = Date.now();
     const data = JSON.stringify(input.data);
+    const unit = input.page === null ? null : unitAt(this.ctx.db, input.bookId, input.page);
     if (input.id) {
       this.ctx.db
-        .prepare("update sketches set title = ?, data = ?, svg = ?, block_id = ?, unit_id = ?, updated_at = ? where id = ?")
-        .run(input.title, data, input.svg, input.blockId, input.unitId, now, input.id);
+        .prepare("update sketches set title = ?, data = ?, svg = ?, page = ?, y = ?, unit_id = ?, updated_at = ? where id = ?")
+        .run(input.title, data, input.svg, input.page, input.y, unit, now, input.id);
       return this.get(input.id);
     }
     const r = this.ctx.db
-      .prepare("insert into sketches (book_id, block_id, unit_id, title, data, svg, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(input.bookId, input.blockId, input.unitId, input.title, data, input.svg, now, now);
+      .prepare("insert into sketches (book_id, page, y, unit_id, title, data, svg, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(input.bookId, input.page, input.y, unit, input.title, data, input.svg, now, now);
     return this.get(Number(r.lastInsertRowid));
   }
 

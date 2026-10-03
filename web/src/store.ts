@@ -9,7 +9,7 @@ import { api, errorText, on } from "./api";
 
 export type Route =
   | { name: "library" }
-  | { name: "reader"; bookId: string; unitId?: number; blockId?: number }
+  | { name: "reader"; bookId: string; page?: number; blockId?: number; terms?: string[] }
   | { name: "review"; bookId?: string | null }
   | { name: "map"; bookId?: string | null; conceptId?: number }
   | { name: "settings" };

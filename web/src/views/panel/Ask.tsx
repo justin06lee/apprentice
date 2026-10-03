@@ -1,18 +1,19 @@
 /**
- * Asking about the book. A conversation is anchored to the passage it began
- * on; the model sees that passage, the chapter around it, the reader's notes
- * and what they know. After an explanation it can offer to rewrite the
- * passage in the light of it — offered, not pushed.
+ * Asking about the book. A conversation is anchored to the passage (or the
+ * boxed region) it began on; the model sees that, the pages around it, the
+ * reader's notes and what they know. After an explanation it can offer to
+ * rewrite the passage in the light of it — offered, not pushed.
  */
-import { ArrowUp, ChevronLeft, Copy, Layers, MessageCircle, Plus, Settings, Square, Trash2, Wand2, X } from "lucide-react";
+import { ArrowUp, ChevronLeft, Copy, Layers, MessageCircle, Plus, Settings, Square, SquareDashed, Trash2, Wand2, X } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { ChatMessage, ChatThread } from "../../../../shared/types";
+import type { ChatMessage, ChatThread, Passage } from "../../../../shared/types";
 import { api, errorText } from "../../api";
 import { ago } from "../../lib/format";
 import { renderMarkdown } from "../../lib/markdown";
 import { follow } from "../../lib/stream";
 import { useApp } from "../../store";
-import { useReader } from "../reader/state";
+import { bench } from "../reader/Slip";
+import { useReader, type Region } from "../reader/state";
 
 const QUICK = [
   ["Explain", "Explain this in plain terms."],
@@ -26,9 +27,16 @@ const Answer = memo(function Answer({ text }: { text: string }) {
   return <div className="answer selectable" dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />;
 });
 
+type Context = { passage: Passage | null; region: Region | null };
+
+/** Back to where a message was asked from. */
+function show(m: ChatMessage) {
+  if (m.page === null) return;
+  useReader.getState().goTo(m.page, m.start !== null && m.end !== null ? { range: [m.start, m.end] } : undefined);
+}
+
 export function Ask() {
   const bookId = useReader((s) => s.bookId)!;
-  const unitId = useReader((s) => s.unitId);
   const request = useReader((s) => s.askRequest);
   const ai = useApp((s) => s.ai);
   const settings = useApp((s) => s.settings);
@@ -38,7 +46,7 @@ export function Ask() {
   const [threads, setThreads] = useState<ChatThread[] | null>(null);
   const [threadId, setThreadId] = useState<number | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [context, setContext] = useState<{ quote: string | null; blockIds: number[] } | null>(null);
+  const [context, setContext] = useState<Context | null>(null);
   const [input, setInput] = useState("");
   const [stream, setStream] = useState<{ id: string; text: string } | null>(null);
   const [view, setView] = useState<"list" | "thread">("thread");
@@ -68,18 +76,25 @@ export function Ask() {
         threadId: threadId ?? -1,
         role: "user",
         content: message,
-        quote: ctx?.quote ?? null,
-        blockId: ctx?.blockIds[0] ?? null,
+        quote: ctx?.passage?.quote ?? (ctx?.region ? `[the region of page ${ctx.region.page + 1} you boxed]` : null),
+        page: ctx?.passage?.page ?? ctx?.region?.page ?? null,
+        start: ctx?.passage?.start ?? null,
+        end: ctx?.passage?.end ?? null,
         createdAt: Date.now(),
       };
       setMessages((m) => [...m, pending]);
       setContext(null);
       try {
+        const visible = useReader.getState().visible;
         const r = await api.ai.ask({
           threadId,
           bookId,
           message,
-          context: { ...(ctx?.blockIds.length ? { blockIds: ctx.blockIds } : {}), ...(ctx?.quote ? { quote: ctx.quote } : {}), ...(unitId ? { unitId } : {}) },
+          context: {
+            ...(ctx?.passage ? { passage: { page: ctx.passage.page, start: ctx.passage.start, end: ctx.passage.end, quote: ctx.passage.quote } } : {}),
+            ...(ctx?.region ? { region: ctx.region } : {}),
+            ...(visible.length ? { pages: visible } : {}),
+          },
         });
         setThreadId(r.threadId);
         setStream({ id: r.streamId, text: "" });
@@ -100,7 +115,7 @@ export function Ask() {
         setMessages((m) => m.filter((x) => x.id !== pending.id));
       }
     },
-    [bookId, context, loadThreads, stream, threadId, toast, unitId],
+    [bookId, context, loadThreads, stream, threadId, toast],
   );
 
   // A new question from the text: fresh conversation about that passage.
@@ -109,14 +124,18 @@ export function Ask() {
     handled.current = request.seq;
     offRef.current?.();
     setStream(null);
+    if (request.threadId) {
+      void openThread(request.threadId);
+      return;
+    }
     setThreadId(null);
     setMessages([]);
     setView("thread");
-    const ctx = { quote: request.quote, blockIds: request.blockIds };
+    const ctx = { passage: request.passage, region: request.region };
     setContext(ctx);
     if (request.prompt) void send(request.prompt, ctx);
     else requestAnimationFrame(() => inputRef.current?.focus());
-  }, [request, send]);
+  }, [request, send]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useLayoutEffect(() => {
     const el = listRef.current;
@@ -193,7 +212,9 @@ export function Ask() {
     );
   }
 
-  const anchor = messages.find((m) => m.blockId)?.blockId ?? context?.blockIds[0] ?? null;
+  // The passage the conversation is about, for a rewrite to work on.
+  const asked = messages.find((m) => m.role === "user" && m.page !== null && m.start !== null && m.end !== null && m.quote);
+  const anchor: Passage | null = asked ? { page: asked.page!, start: asked.start!, end: asked.end!, quote: asked.quote! } : null;
   const lastAssistant = [...messages].reverse().find((m) => m.role === "assistant");
 
   return (
@@ -223,7 +244,7 @@ export function Ask() {
           <div className="ask-intro">
             <MessageCircle size={22} />
             <p>
-              Ask anything about this book. Select a passage first to ask about it specifically — the model sees the chapter around it, your
+              Ask anything about these pages. Select a passage — or box a figure or an equation — to ask about it; the model sees the pages around it, your
               notes, and what you already know.
             </p>
           </div>
@@ -232,7 +253,7 @@ export function Ask() {
           m.role === "user" ? (
             <div key={m.id} className="msg user">
               {m.quote && (
-                <blockquote className="msg-quote" onClick={() => m.blockId && void useReader.getState().goToBlock(m.blockId)}>
+                <blockquote className="msg-quote" onClick={() => show(m)} title={m.page !== null ? `Page ${m.page + 1}` : undefined}>
                   {m.quote.length > 280 ? `${m.quote.slice(0, 280)}…` : m.quote}
                 </blockquote>
               )}
@@ -249,7 +270,7 @@ export function Ask() {
                   className="btn small ghost"
                   onClick={() => {
                     const q = [...messages].reverse().find((x) => x.role === "user" && x.createdAt <= m.createdAt);
-                    useReader.getState().set({ cardDraft: { blockId: anchor, quote: `${q?.content ?? ""}\n\n${m.content}`.slice(0, 1500) } });
+                    useReader.getState().set({ cardDraft: { page: m.page, quote: `${q?.content ?? ""}\n\n${m.content}`.slice(0, 1500), context: "" } });
                   }}
                 >
                   <Layers size={12} /> Card
@@ -258,8 +279,8 @@ export function Ask() {
                   <button
                     className="btn small offer"
                     onClick={() => {
-                      useReader.getState().set({ rewrite: { blockId: anchor, streamId: null, text: "", state: "idle", instruction: "", threadId } });
-                      void useReader.getState().goToBlock(anchor, false);
+                      useReader.getState().goTo(anchor.page);
+                      useReader.getState().set({ slip: bench(anchor, "rewrite", threadId) });
                     }}
                     title="Rewrite the passage you asked about, folding in this explanation. It becomes your version of it; the book's stays one click away."
                   >
@@ -278,15 +299,25 @@ export function Ask() {
       </div>
 
       <div className="composer-box">
-        {context?.quote && (
+        {context?.region && (
           <div className="ctx-chip">
-            <span className="ctx-quote">“{context.quote.length > 160 ? `${context.quote.slice(0, 160)}…` : context.quote}”</span>
+            <span className="ctx-quote">
+              <SquareDashed size={12} /> The box you drew on page {context.region.page + 1} — the model sees it as a picture
+            </span>
+            <button className="icon-btn small" onClick={() => setContext(null)} aria-label="Remove region">
+              <X size={13} />
+            </button>
+          </div>
+        )}
+        {context?.passage && (
+          <div className="ctx-chip">
+            <span className="ctx-quote">“{context.passage.quote.length > 160 ? `${context.passage.quote.slice(0, 160)}…` : context.passage.quote}”</span>
             <button className="icon-btn small" onClick={() => setContext(null)} aria-label="Remove passage">
               <X size={13} />
             </button>
           </div>
         )}
-        {context?.quote && !input && !stream && (
+        {(context?.passage || context?.region) && !input && !stream && (
           <div className="quick">
             {QUICK.map(([label, prompt]) => (
               <button key={label} className="chip-btn" onClick={() => void send(prompt)}>
@@ -299,7 +330,7 @@ export function Ask() {
           <textarea
             ref={inputRef}
             rows={1}
-            placeholder={context?.quote ? "Ask about this passage…" : "Ask about the book…"}
+            placeholder={context?.passage ? "Ask about this passage…" : context?.region ? "Ask about what you boxed…" : "Ask about these pages…"}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {

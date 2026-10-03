@@ -8,7 +8,7 @@ import type { Card } from "../../../../shared/types";
 import { api, errorText, on } from "../../api";
 import { cloze, plural } from "../../lib/format";
 import { useApp } from "../../store";
-import { useReader } from "../reader/state";
+import { useReader, useUnitId } from "../reader/state";
 
 function CardRow({ card, onChanged }: { card: Card; onChanged(): void }) {
   const [editing, setEditing] = useState(false);
@@ -45,7 +45,10 @@ function CardRow({ card, onChanged }: { card: Card; onChanged(): void }) {
   }
   return (
     <div className="card-row">
-      <div className="card-row-main" onClick={() => card.blockId && void useReader.getState().goToBlock(card.blockId)}>
+      <div
+        className="card-row-main"
+        onClick={() => (card.blockId ? void useReader.getState().goToBlock(card.blockId) : card.page !== null && useReader.getState().goTo(card.page))}
+      >
         <div className="card-front">{card.kind === "cloze" ? cloze(card.front, true) : card.front}</div>
         {card.kind === "basic" && <div className="card-back">{card.back}</div>}
         <div className="card-meta">
@@ -82,7 +85,7 @@ function CardRow({ card, onChanged }: { card: Card; onChanged(): void }) {
 
 export function Cards() {
   const bookId = useReader((s) => s.bookId)!;
-  const unitId = useReader((s) => s.unitId);
+  const unitId = useUnitId();
   const units = useReader((s) => s.units);
   const ai = useApp((s) => s.ai);
   const jobs = useApp((s) => s.jobs);
@@ -119,7 +122,7 @@ export function Cards() {
         )}
       </div>
       <div className="cards-actions">
-        <button className="btn small" onClick={() => useReader.getState().set({ cardDraft: { blockId: null, quote: "" } })}>
+        <button className="btn small" onClick={() => useReader.getState().set({ cardDraft: { page: useReader.getState().visible[0] ?? null, quote: "", context: "" } })}>
           <Plus size={13} /> New card
         </button>
         {ai?.available && unitId && (

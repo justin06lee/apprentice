@@ -72,7 +72,7 @@ function Detail({ id, onSelect, onClose }: { id: number; onSelect(id: number): v
         <div className="label">Where it appears · {plural(d.mentions.length, "passage")}</div>
         <div className="map-mentions">
           {d.mentions.slice(0, 12).map((m) => (
-            <button key={m.blockId} className="mention" onClick={() => go({ name: "reader", bookId: m.bookId, unitId: m.unitId, blockId: m.blockId })}>
+            <button key={m.blockId} className="mention" onClick={() => go({ name: "reader", bookId: m.bookId, blockId: m.blockId, terms: [d.concept.name] })}>
               <span className="mention-where">
                 {m.isDefinition ? "Defined · " : ""}
                 {m.bookTitle} · {m.unitTitle}

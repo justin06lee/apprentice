@@ -1,24 +1,43 @@
 /**
- * The open book: which chapter is on screen, what is on it, and the
- * reader's tools around it. One store, reset whenever a book opens, so the
- * column, the contents and the side panel all see the same thing.
+ * The open book: which page is in front of the reader, what they have left
+ * on its pages, and the tools around it. One store, reset whenever a book
+ * opens, so the pages, the contents and the side panel all see the same
+ * thing. The book view (Book.tsx) decides how the page is shown — which
+ * spread, how big, the turn that gets there; everything else just names a
+ * page.
  */
 import { create } from "zustand";
-import type { Block, Book, Highlight, HighlightColor, ReadingPosition, Section, UnitContent } from "../../../../shared/types";
-import { plainText } from "../../../../shared/inline";
+import type { ReadResult } from "../../../../shared/api";
+import type { Rect, Trim } from "../../../../shared/pages";
+import type { Annotations, Book, Highlight, HighlightColor, Passage, Section, Version } from "../../../../shared/types";
 import { api, errorText } from "../../api";
-import type { BlockRange } from "../../lib/selection";
 import { useApp } from "../../store";
 
 export type PanelTab = "ask" | "notes" | "cards" | "concepts" | "sketch";
 
-export interface RewriteState {
-  blockId: number;
+/** What the reader has picked out: one passage per page it touches, in reading order. */
+export interface Selection {
+  parts: Passage[];
+  /** All of its words, as prose. */
+  quote: string;
+}
+
+/** A box drawn around part of a page — a figure, an equation, a table. */
+export interface Region {
+  page: number;
+  rect: Rect;
+}
+
+/** A passage being written over: by hand, or by a model. */
+export interface SlipState {
+  passage: Passage;
+  mode: "edit" | "rewrite";
   streamId: string | null;
   text: string;
   state: "idle" | "streaming" | "done" | "error";
   error?: string;
   instruction: string;
+  /** The conversation whose explanation the rewrite should fold in. */
   threadId: number | null;
 }
 
@@ -27,61 +46,89 @@ interface ReaderState {
   book: Book | null;
   sections: Section[];
   units: Section[];
-  unitId: number | null;
-  content: UnitContent | null;
+  /** Every page's size in points. */
+  sizes: Array<[number, number]>;
+  /** Where the pages are printed, for trimming margins. */
+  trim: Trim | null;
   loading: boolean;
   error: string | null;
 
+  /** The page in front of the reader; the book shows the spread it is in. */
+  page: number;
+  /** The pages on screen right now, as the book view lays them out. */
+  visible: number[];
+
+  highlights: Highlight[];
+  versions: Version[];
+  pins: Annotations["sketches"];
+  chats: Annotations["chats"];
+  read: Set<number>;
+
   panel: PanelTab | null;
   tocOpen: boolean;
-  pageView: boolean;
-  pageTarget: number | null;
-  /** A block to bring into view; `seq` makes repeated jumps to the same block fire. */
-  focus: { blockId: number; offset: number; flash: boolean; seq: number } | null;
-  /** A request for the Ask panel: talk about this passage. */
-  askRequest: { seq: number; quote: string | null; blockIds: number[]; prompt?: string } | null;
-  /** Open a sketch in the Sketch panel, anchored to a block. */
-  sketchRequest: { seq: number; blockId: number | null; sketchId: number | null } | null;
-  editing: number | null;
-  rewrite: RewriteState | null;
-  showOriginal: Set<number>;
-  activeSection: number | null;
-  cardDraft: { blockId: number | null; quote: string } | null;
+  /** Dragging draws a box around a region instead of selecting text. */
+  boxMode: boolean;
+  /** Something to point at once its page is up; `seq` makes a repeat fire. */
+  flash: { page: number; box?: Rect; range?: [number, number]; seq: number } | null;
+  /** Search words to mark on a page until the reader moves on. */
+  marks: { page: number; terms: string[] } | null;
+  askRequest: { seq: number; passage: Passage | null; region: Region | null; prompt?: string; threadId?: number } | null;
+  sketchRequest: { seq: number; anchor: { page: number; y: number } | null; sketchId: number | null } | null;
+  slip: SlipState | null;
+  /** Versions lifted off their passage for now, showing the book's text. */
+  lifted: Set<number>;
+  cardDraft: { page: number | null; quote: string; context: string } | null;
 
-  open(bookId: string, unitId?: number, blockId?: number): Promise<void>;
-  loadUnit(unitId: number, target?: { blockId: number; offset?: number; flash?: boolean }): Promise<void>;
-  goToBlock(blockId: number, flash?: boolean): Promise<void>;
+  open(bookId: string, target?: { page?: number | undefined; blockId?: number | undefined; terms?: string[] | undefined }): Promise<void>;
+  goTo(page: number, show?: { box?: Rect; range?: [number, number]; terms?: string[] }): void;
+  goToBlock(blockId: number, terms?: string[]): Promise<void>;
   nextUnit(dir: 1 | -1): void;
-  refreshSections(): Promise<void>;
-  setUnitFraction(unitId: number, fraction: number): void;
+  applyRead(result: ReadResult, pages?: number[]): void;
+  refreshAnnotations(): Promise<void>;
 
-  addHighlights(ranges: BlockRange[], quote: string, color: HighlightColor, note?: string): Promise<Highlight[]>;
+  addHighlights(sel: Selection, color: HighlightColor, note?: string): Promise<Highlight[]>;
   updateHighlight(id: number, patch: { color?: HighlightColor; note?: string }): Promise<void>;
   removeHighlight(id: number): Promise<void>;
-  saveBlock(blockId: number, text: string | null, source?: "user" | "ai"): Promise<Block | null>;
-  replaceBlock(block: Block): void;
-  toggleOriginal(blockId: number): void;
+  saveVersion(passage: Passage, text: string, source: "user" | "ai"): Promise<Version | null>;
+  removeVersion(id: number): Promise<void>;
+  toggleLifted(id: number): void;
 
   setPanel(panel: PanelTab | null): void;
-  ask(quote: string | null, blockIds: number[], prompt?: string): void;
-  sketch(blockId: number | null, sketchId?: number | null): void;
+  ask(passage: Passage | null, region?: Region | null, prompt?: string): void;
+  openThread(threadId: number): void;
+  sketch(anchor: { page: number; y: number } | null, sketchId?: number | null): void;
   set(patch: Partial<ReaderState>): void;
 }
 
 let seq = 0;
 
+/** The chapter a page is in: the last to start at or before it. */
+export function unitAtPage(units: Section[], page: number): Section | undefined {
+  let best: Section | undefined;
+  for (const u of units) if (u.page <= page && (!best || u.page >= best.page)) best = u;
+  return best ?? units[0];
+}
+
 /**
- * The next chapter, fetched while the reader is reading this one, so
- * turning the page does not wait on the database. Taken once, then gone:
- * anything the reader does to it after it was fetched would be stale.
+ * The page that says which chapter is open: the last one on screen, so a
+ * chapter that begins on the right-hand page is the one being read.
  */
-const prefetched = new Map<number, Promise<UnitContent>>();
-function prefetch(bookId: string, unitId: number) {
-  if (prefetched.has(unitId)) return;
-  const idle = window.requestIdleCallback ?? ((fn: () => void) => setTimeout(fn, 300));
-  idle(() => {
-    if (!prefetched.has(unitId)) prefetched.set(unitId, api.reader.unit(bookId, unitId));
-  });
+export function lastVisible(s: { visible: number[]; page: number }): number {
+  return s.visible[s.visible.length - 1] ?? s.page;
+}
+
+/** The chapter the open pages are in. */
+export function useUnitId(): number | null {
+  return useReader((s) => unitAtPage(s.units, lastVisible(s))?.id ?? null);
+}
+
+/** A chapter's pages: from its first to the page before the next chapter starts. */
+export function unitPages(units: Section[], unitId: number, pageCount: number): [number, number] | null {
+  const sorted = [...units].sort((a, b) => a.page - b.page);
+  const i = sorted.findIndex((u) => u.id === unitId);
+  if (i < 0) return null;
+  const next = sorted.slice(i + 1).find((u) => u.page > sorted[i]!.page);
+  return [sorted[i]!.page, Math.max(sorted[i]!.page, (next ? next.page : pageCount) - 1)];
 }
 
 export const useReader = create<ReaderState>((set, get) => ({
@@ -89,211 +136,188 @@ export const useReader = create<ReaderState>((set, get) => ({
   book: null,
   sections: [],
   units: [],
-  unitId: null,
-  content: null,
+  sizes: [],
+  trim: null,
   loading: false,
   error: null,
+  page: 0,
+  visible: [],
+  highlights: [],
+  versions: [],
+  pins: [],
+  chats: [],
+  read: new Set(),
   panel: null,
   tocOpen: true,
-  pageView: false,
-  pageTarget: null,
-  focus: null,
+  boxMode: false,
+  flash: null,
+  marks: null,
   askRequest: null,
   sketchRequest: null,
-  editing: null,
-  rewrite: null,
-  showOriginal: new Set(),
-  activeSection: null,
+  slip: null,
+  lifted: new Set(),
   cardDraft: null,
 
   set(patch) {
     set(patch);
   },
 
-  async open(bookId, unitId, blockId) {
-    prefetched.clear();
+  async open(bookId, target) {
     set({
       bookId,
       book: null,
       sections: [],
       units: [],
-      unitId: null,
-      content: null,
+      sizes: [],
+      trim: null,
       loading: true,
       error: null,
-      pageView: false,
-      editing: null,
-      rewrite: null,
-      showOriginal: new Set(),
-      focus: null,
+      page: 0,
+      visible: [],
+      highlights: [],
+      versions: [],
+      pins: [],
+      chats: [],
+      read: new Set(),
+      flash: null,
+      marks: null,
+      slip: null,
+      lifted: new Set(),
+      cardDraft: null,
     });
     try {
       const opened = await api.books.open(bookId);
       const units = opened.sections.filter((s) => s.isUnit);
-      set({ book: opened.book, sections: opened.sections, units });
-      let target = unitId ?? opened.position?.unitId ?? null;
-      if (target === null || !units.some((u) => u.id === target)) {
-        // Start where the reading starts, not on a title page.
-        target = (units.find((u) => u.kind === "body") ?? units[0])?.id ?? null;
-      }
-      if (target === null) {
-        set({ loading: false, error: "This book has no readable text." });
-        return;
-      }
-      const pos: ReadingPosition | null = !unitId && opened.position?.unitId === target ? opened.position : null;
-      await get().loadUnit(
-        target,
-        blockId ? { blockId, flash: true } : pos?.blockId ? { blockId: pos.blockId, offset: pos.offset, flash: false } : undefined,
-      );
+      const count = opened.sizes.length;
+      // Start where the reading starts, not on a title page.
+      let page = target?.page ?? opened.position?.page ?? (units.find((u) => u.kind === "body") ?? units[0])?.page ?? 0;
+      page = Math.max(0, Math.min(count - 1, page));
+      set({ book: opened.book, sections: opened.sections, units, sizes: opened.sizes, trim: opened.trim, page, loading: false });
+      if (!count) set({ error: "This PDF has no pages." });
+      void get().refreshAnnotations();
+      if (target?.blockId) void get().goToBlock(target.blockId, target.terms);
     } catch (e) {
       set({ loading: false, error: errorText(e) });
     }
   },
 
-  async loadUnit(unitId, target) {
-    const { bookId } = get();
-    if (!bookId) return;
-    if (get().unitId === unitId && get().content) {
-      if (target) set({ focus: { blockId: target.blockId, offset: target.offset ?? 0, flash: target.flash ?? true, seq: ++seq } });
-      return;
-    }
-    set({ loading: true, editing: null, rewrite: null });
-    try {
-      const early = prefetched.get(unitId);
-      prefetched.delete(unitId);
-      const content = await (early ?? api.reader.unit(bookId, unitId));
-      if (get().bookId !== bookId) return;
-      set({
-        unitId,
-        content,
-        loading: false,
-        activeSection: null,
-        focus: target ? { blockId: target.blockId, offset: target.offset ?? 0, flash: target.flash ?? true, seq: ++seq } : { blockId: -1, offset: 0, flash: false, seq: ++seq },
-      });
-      void api.reader.savePosition(bookId, { unitId, blockId: target?.blockId ?? null, offset: target?.offset ?? 0 });
-      const units = get().units;
-      const next = units[units.findIndex((u) => u.id === unitId) + 1];
-      if (next) prefetch(bookId, next.id);
-    } catch (e) {
-      set({ loading: false, error: errorText(e) });
-    }
+  goTo(page, show) {
+    const { sizes, bookId } = get();
+    if (!bookId || !sizes.length) return;
+    const p = Math.max(0, Math.min(sizes.length - 1, page));
+    set({
+      page: p,
+      ...(show?.box || show?.range ? { flash: { page: p, ...(show.box ? { box: show.box } : {}), ...(show.range ? { range: show.range } : {}), seq: ++seq } } : {}),
+      ...(show?.terms?.length ? { marks: { page: p, terms: show.terms } } : {}),
+    });
   },
 
-  async goToBlock(blockId, flash = true) {
-    const content = get().content;
-    if (content?.blocks.some((b) => b.id === blockId)) {
-      set({ focus: { blockId, offset: 0, flash, seq: ++seq }, pageView: false });
-      return;
-    }
+  async goToBlock(blockId, terms) {
     const where = await api.reader.locate(blockId);
     if (!where) return;
     if (where.bookId !== get().bookId) {
-      useApp.getState().go({ name: "reader", bookId: where.bookId, unitId: where.unitId, blockId });
+      useApp.getState().go({ name: "reader", bookId: where.bookId, blockId, ...(terms ? { terms } : {}) });
       return;
     }
-    set({ pageView: false });
-    await get().loadUnit(where.unitId, { blockId, flash });
+    get().goTo(where.page, { ...(where.box ? { box: where.box } : {}), ...(terms ? { terms } : {}) });
   },
 
   nextUnit(dir) {
-    const { units, unitId } = get();
-    const i = units.findIndex((u) => u.id === unitId);
-    const next = units[i + dir];
-    if (next) void get().loadUnit(next.id);
+    const { units } = get();
+    const sorted = [...units].sort((a, b) => a.page - b.page);
+    const here = unitAtPage(sorted, lastVisible(get()));
+    const i = sorted.findIndex((u) => u.id === here?.id);
+    let j = i + dir;
+    // Units that start on the same page are one stop.
+    while (sorted[j] && sorted[j]!.page === here?.page) j += dir;
+    const next = sorted[j];
+    if (next) get().goTo(next.page);
   },
 
-  async refreshSections() {
+  applyRead(result, pages) {
+    const fractions = new Map(result.units.map((u) => [u.unitId, u.readFraction]));
+    const sections = get().sections.map((s) => (fractions.has(s.id) ? { ...s, readFraction: fractions.get(s.id)! } : s));
+    const read = pages?.length ? new Set([...get().read, ...pages]) : get().read;
+    set({ sections, units: sections.filter((s) => s.isUnit), read });
+  },
+
+  async refreshAnnotations() {
     const { bookId } = get();
     if (!bookId) return;
-    const opened = await api.books.open(bookId);
-    set({ sections: opened.sections, units: opened.sections.filter((s) => s.isUnit), book: opened.book });
-  },
-
-  setUnitFraction(unitId, fraction) {
-    const sections = get().sections.map((s) => (s.id === unitId ? { ...s, readFraction: fraction } : s));
-    set({ sections, units: sections.filter((s) => s.isUnit) });
-  },
-
-  async addHighlights(ranges, quote, color, note) {
-    const { bookId, content } = get();
-    if (!bookId || !content) return [];
-    const made: Highlight[] = [];
-    for (const r of ranges) {
-      const block = content.blocks.find((b) => b.id === r.blockId);
-      if (!block) continue;
-      const text = block.custom && !get().showOriginal.has(block.id) ? displayText(block) : block.text;
-      const part = ranges.length === 1 ? quote : text.slice(r.start, r.end);
-      made.push(await api.highlights.add({ bookId, blockId: r.blockId, start: r.start, end: r.end, quote: part, color, ...(note && made.length === 0 ? { note } : {}) }));
+    try {
+      const a = await api.reader.annotations(bookId);
+      if (get().bookId !== bookId) return;
+      set({ highlights: a.highlights, versions: a.versions, pins: a.sketches, chats: a.chats, read: new Set(a.read) });
+    } catch (e) {
+      useApp.getState().toast(errorText(e), "error");
     }
-    const c = get().content;
-    if (c) set({ content: { ...c, highlights: [...c.highlights, ...made] } });
+  },
+
+  async addHighlights(sel, color, note) {
+    const { bookId } = get();
+    if (!bookId) return [];
+    const made: Highlight[] = [];
+    try {
+      for (const part of sel.parts) {
+        made.push(await api.highlights.add({ bookId, ...part, color, ...(note && made.length === 0 ? { note } : {}) }));
+      }
+    } catch (e) {
+      useApp.getState().toast(errorText(e), "error");
+    }
+    set({ highlights: [...get().highlights, ...made] });
     return made;
   },
 
   async updateHighlight(id, patch) {
     const h = await api.highlights.update(id, patch);
-    const c = get().content;
-    if (c) set({ content: { ...c, highlights: c.highlights.map((x) => (x.id === id ? h : x)) } });
+    set({ highlights: get().highlights.map((x) => (x.id === id ? h : x)) });
   },
 
   async removeHighlight(id) {
     await api.highlights.remove(id);
-    const c = get().content;
-    if (c) set({ content: { ...c, highlights: c.highlights.filter((x) => x.id !== id) } });
+    set({ highlights: get().highlights.filter((x) => x.id !== id) });
   },
 
-  async saveBlock(blockId, text, source = "user") {
+  async saveVersion(passage, text, source) {
+    const { bookId } = get();
+    if (!bookId) return null;
     try {
-      const block = await api.blocks.edit(blockId, text, source);
-      get().replaceBlock(block);
-      // Highlights may have moved with their words.
-      const { bookId, unitId } = get();
-      if (bookId && unitId) {
-        const fresh = await api.reader.unit(bookId, unitId);
-        const c = get().content;
-        if (c) set({ content: { ...c, highlights: fresh.highlights } });
-      }
-      return block;
+      const v = await api.versions.save({ bookId, ...passage, text, source });
+      const lifted = new Set(get().lifted);
+      lifted.delete(v.id);
+      set({ versions: [...get().versions.filter((x) => x.id !== v.id), v], lifted });
+      return v;
     } catch (e) {
       useApp.getState().toast(errorText(e), "error");
       return null;
     }
   },
 
-  replaceBlock(block) {
-    const c = get().content;
-    if (!c) return;
-    const showOriginal = new Set(get().showOriginal);
-    showOriginal.delete(block.id);
-    set({ content: { ...c, blocks: c.blocks.map((b) => (b.id === block.id ? block : b)) }, showOriginal });
+  async removeVersion(id) {
+    await api.versions.remove(id);
+    set({ versions: get().versions.filter((v) => v.id !== id) });
   },
 
-  toggleOriginal(blockId) {
-    const s = new Set(get().showOriginal);
-    if (s.has(blockId)) s.delete(blockId);
-    else s.add(blockId);
-    set({ showOriginal: s });
+  toggleLifted(id) {
+    const lifted = new Set(get().lifted);
+    if (lifted.has(id)) lifted.delete(id);
+    else lifted.add(id);
+    set({ lifted });
   },
 
   setPanel(panel) {
     set({ panel });
   },
 
-  ask(quote, blockIds, prompt) {
-    set({ panel: "ask", askRequest: { seq: ++seq, quote, blockIds, ...(prompt ? { prompt } : {}) } });
+  ask(passage, region = null, prompt) {
+    set({ panel: "ask", askRequest: { seq: ++seq, passage, region, ...(prompt ? { prompt } : {}) } });
   },
 
-  sketch(blockId, sketchId = null) {
-    set({ panel: "sketch", sketchRequest: { seq: ++seq, blockId, sketchId } });
+  openThread(threadId) {
+    set({ panel: "ask", askRequest: { seq: ++seq, passage: null, region: null, threadId } });
+  },
+
+  sketch(anchor, sketchId = null) {
+    set({ panel: "sketch", sketchRequest: { seq: ++seq, anchor, sketchId } });
   },
 }));
-
-/** The words a block shows: the reader's version (minus its markup) or the book's. */
-export function displayText(block: Block): string {
-  return block.custom ? plainText(block.custom.text) : block.text;
-}
-
-/** Index units by id, sections by unit, for the contents. */
-export function unitOf(sections: Section[], unitId: number | null): Section | undefined {
-  return sections.find((s) => s.id === unitId);
-}

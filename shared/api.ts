@@ -6,9 +6,10 @@
  * IPC invoke named by its dotted path. Events go the other way, named in
  * `Events`.
  */
+import type { PageText, Rect } from "./pages.js";
 import type {
   AiStatus,
-  Block,
+  Annotations,
   Book,
   Card,
   CardKind,
@@ -21,6 +22,7 @@ import type {
   Job,
   KnowledgeGraph,
   OpenedBook,
+  Passage,
   Rating,
   ReadingPosition,
   ReviewQueue,
@@ -28,22 +30,27 @@ import type {
   Settings,
   Sketch,
   SketchData,
-  UnitContent,
+  Version,
 } from "./types.js";
 
 export interface HighlightRow extends Highlight {
   unitTitle: string;
-  /** The block's text around the highlight, for the notes list. */
-  context: string;
 }
 
 export interface ChatContext {
-  /** Blocks the question is about (a selection may span several). */
-  blockIds?: number[];
-  /** The selected words, when there was a selection. */
-  quote?: string;
-  /** The unit the reader is in, for surrounding context. */
-  unitId?: number;
+  /** The passage the question is about, when there was a selection. */
+  passage?: Passage;
+  /** A region of a page to look at — a figure, an equation — when one was drawn. */
+  region?: { page: number; rect: Rect };
+  /** The pages open in front of the reader, for what "this" means without a selection. */
+  pages?: number[];
+}
+
+export interface ReadResult {
+  /** Chapters whose read share changed. */
+  units: Array<{ unitId: number; readFraction: number }>;
+  /** Cards that just joined the reviews. */
+  unlocked: number;
 }
 
 export interface Api {
@@ -58,25 +65,27 @@ export interface Api {
     retry(bookId: string): void;
   };
   reader: {
-    unit(bookId: string, unitId: number): UnitContent;
+    /** A page's text layer: its lines and where each character sits. */
+    pageText(bookId: string, page: number): PageText;
+    /** Everything the reader has left in the book. Places marks made on the old reflowed text the first time. */
+    annotations(bookId: string): Annotations;
     savePosition(bookId: string, position: ReadingPosition): void;
-    /** Blocks that have been on screen long enough to count as read. Returns the unit's new read fraction. */
-    markRead(bookId: string, unitId: number, reads: Array<{ blockId: number; dwellMs: number }>): { readFraction: number; unlocked: number };
+    /** Pages that have been open long enough to count as read. */
+    readPages(bookId: string, reads: Array<{ page: number; dwellMs: number }>): ReadResult;
     /** Mark a whole unit read (or unread). */
-    markUnit(bookId: string, unitId: number, read: boolean): { readFraction: number; unlocked: number };
+    markUnit(bookId: string, unitId: number, read: boolean): ReadResult;
     addTime(bookId: string, ms: number): void;
     search(query: string, bookId: string | null): SearchHit[];
-    /** Where a block is: its unit, for jumping to it. */
-    locate(blockId: number): { bookId: string; unitId: number } | null;
-    /** Page size in points, for the page view. */
-    pageSizes(bookId: string): Array<[number, number]>;
+    /** Where a block is: its book, chapter, page and box on the page, for jumping to it. */
+    locate(blockId: number): { bookId: string; unitId: number; page: number; box: Rect | null } | null;
   };
-  blocks: {
-    /** Replace a block's text with the reader's own; null restores the book's. */
-    edit(blockId: number, text: string | null, source?: "user" | "ai"): Block;
+  versions: {
+    /** Write (or rewrite) the reader's own version of a passage. */
+    save(input: { id?: number; bookId: string; page: number; start: number; end: number; quote: string; text: string; source: "user" | "ai" }): Version;
+    remove(id: number): void;
   };
   highlights: {
-    add(input: { bookId: string; blockId: number; start: number; end: number; quote: string; color: HighlightColor; note?: string }): Highlight;
+    add(input: { bookId: string; page: number; start: number; end: number; quote: string; color: HighlightColor; note?: string }): Highlight;
     update(id: number, patch: { color?: HighlightColor; note?: string }): Highlight;
     remove(id: number): void;
     list(bookId: string): HighlightRow[];
@@ -84,14 +93,14 @@ export interface Api {
   sketches: {
     list(bookId: string): Sketch[];
     get(id: number): Sketch;
-    save(input: { id?: number; bookId: string; blockId: number | null; unitId: number | null; title: string; data: SketchData; svg: string }): Sketch;
+    save(input: { id?: number; bookId: string; page: number | null; y: number | null; title: string; data: SketchData; svg: string }): Sketch;
     remove(id: number): void;
   };
   cards: {
     queue(bookId: string | null, limit?: number): ReviewQueue;
     review(cardId: number, rating: Rating, durationMs: number): Card;
     undo(cardId: number): Card | null;
-    create(input: { bookId: string; blockId: number | null; kind: CardKind; front: string; back: string }): Card;
+    create(input: { bookId: string; page: number | null; kind: CardKind; front: string; back: string }): Card;
     update(id: number, patch: { front?: string; back?: string; status?: "active" | "suspended" }): Card;
     remove(id: number): void;
     list(bookId: string, unitId?: number | null): Card[];
@@ -107,13 +116,13 @@ export interface Api {
     status(refresh?: boolean): AiStatus;
     /** Ask about the book. Returns at once; the answer streams as `ai.stream` events. */
     ask(input: { threadId: number | null; bookId: string; message: string; context: ChatContext }): { threadId: number; streamId: string };
-    /** Write the reader a version of a block. Streams as `ai.stream`. */
-    rewrite(input: { blockId: number; instruction?: string; threadId?: number | null }): { streamId: string };
+    /** Write the reader a version of a passage. Streams as `ai.stream`. */
+    rewrite(input: { bookId: string; passage: Passage; instruction?: string; threadId?: number | null }): { streamId: string };
     cancel(streamId: string): void;
     generateCards(bookId: string, unitId: number): { jobId: string };
     mapConcepts(bookId: string, unitId: number): { jobId: string };
-    /** Turn a passage into a card with a model (selection → card). */
-    suggestCard(input: { bookId: string; blockId: number; quote: string }): { front: string; back: string; kind: CardKind };
+    /** Turn a passage into a card with a model (selection → card). `context` is the paragraph around it. */
+    suggestCard(input: { bookId: string; page: number | null; quote: string; context: string }): { front: string; back: string; kind: CardKind };
   };
   chats: {
     list(bookId: string): ChatThread[];

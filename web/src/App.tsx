@@ -32,12 +32,9 @@ function useTheme() {
     return () => media.removeEventListener("change", apply);
   }, [settings.theme]);
   useEffect(() => {
-    const root = document.documentElement.style;
-    root.setProperty("--reader-size", `${settings.fontSize}px`);
-    root.setProperty("--reader-leading", String(settings.lineHeight));
-    root.setProperty("--reader-measure", `${settings.measure}ch`);
-    root.setProperty("--reader-font", settings.readerFont === "serif" ? "var(--font-serif)" : "var(--font-ui)");
-  }, [settings.fontSize, settings.lineHeight, settings.measure, settings.readerFont]);
+    // Night pages are the PDF's own, inverted; the stylesheet keys off this.
+    document.documentElement.dataset["nightPages"] = settings.nightPages ? "on" : "off";
+  }, [settings.nightPages]);
 }
 
 function Rail() {
@@ -186,7 +183,7 @@ export function App() {
       <main className="view">
         <Suspense fallback={<div className="view-loading" />}>
           {route.name === "library" && <Library />}
-          {route.name === "reader" && <Reader key={route.bookId} bookId={route.bookId} unitId={route.unitId} blockId={route.blockId} />}
+          {route.name === "reader" && <Reader key={route.bookId} bookId={route.bookId} page={route.page} blockId={route.blockId} terms={route.terms} />}
           {route.name === "review" && <Review bookId={route.bookId ?? null} />}
           {route.name === "map" && <KnowledgeMap bookId={route.bookId ?? null} conceptId={route.conceptId ?? null} />}
           {route.name === "settings" && <Settings />}
