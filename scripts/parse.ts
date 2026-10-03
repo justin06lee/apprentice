@@ -5,7 +5,7 @@
  *   bun scripts/parse.ts book.pdf                 summary + the sections
  *   bun scripts/parse.ts book.pdf --dump out.md   every block, as markdown
  *   bun scripts/parse.ts book.pdf --pages 40-45   only those pages (1-based)
- *   bun scripts/parse.ts book.pdf --assets dir    render figures/equations too
+ *   bun scripts/parse.ts book.pdf --layer 61      a page's text layer, as the reader selects in it
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -13,12 +13,13 @@ import { analyze } from "../desktop/ingest/analyze.js";
 import { extractConcepts } from "../desktop/ingest/concepts.js";
 import { planUnits } from "../desktop/ingest/units.js";
 import { Extractor, type XPage } from "../desktop/ingest/extract.js";
-import { meta, openPdf, readOutline, renderRegion } from "../desktop/ingest/pdf.js";
+import { pageText } from "../desktop/ingest/pagetext.js";
+import { meta, openPdf, readOutline } from "../desktop/ingest/pdf.js";
 
 const args = process.argv.slice(2);
 const file = args[0];
 if (!file) {
-  console.error("usage: bun scripts/parse.ts <book.pdf> [--dump out.md] [--pages a-b] [--assets dir]");
+  console.error("usage: bun scripts/parse.ts <book.pdf> [--dump out.md] [--pages a-b] [--layer page] [--concepts]");
   process.exit(1);
 }
 const opt = (name: string) => {
@@ -43,7 +44,7 @@ for (let i = from; i < to; i++) pages.push(ex.page(i));
 const t1 = performance.now();
 // analyze() indexes pages by their page number, so a partial run is padded.
 const padded: XPage[] = [];
-for (let i = 0; i < to; i++) padded.push(pages[i - from] ?? { index: i, label: "", width: 1, height: 1, lines: [], images: [], vectors: [] });
+for (let i = 0; i < to; i++) padded.push(pages[i - from] ?? { index: i, label: "", x0: 0, y0: 0, width: 1, height: 1, lines: [], images: [], vectors: [] });
 const outline = readOutline(doc).filter((e) => e.page >= from && e.page < to);
 const book = analyze(padded, ex.fonts, outline, meta(doc));
 const t2 = performance.now();
@@ -93,18 +94,13 @@ if (dump) {
   console.log(`  wrote ${dump}`);
 }
 
-const assets = opt("--assets");
-if (assets) {
-  fs.mkdirSync(assets, { recursive: true });
-  let n = 0;
-  for (const b of book.blocks) {
-    if (!b.asset) continue;
-    const page = doc.loadPage(b.asset.page);
-    const img = renderRegion(page, b.asset.bbox, b.asset.scale, b.asset.photo ? "jpeg" : "png", b.type === "equation");
-    fs.writeFileSync(path.join(assets, `${b.type}-${b.page + 1}-${n++}.${b.asset.photo ? "jpg" : "png"}`), img.data);
-    page.destroy();
-  }
-  console.log(`  rendered ${n} assets into ${assets}`);
+const layer = opt("--layer");
+if (layer) {
+  const t = performance.now();
+  const pt = pageText(new Extractor(doc, true), Number(layer) - 1);
+  console.log(`  layer   page ${layer}: ${pt.lines.length} lines, ${pt.text.length} characters (${(performance.now() - t).toFixed(0)}ms)`);
+  for (const l of pt.lines)
+    console.log(`    b${String(l.b).padEnd(3)} ${l.x0.toFixed(0).padStart(4)},${l.y0.toFixed(0).padStart(4)}  ${pt.text.slice(l.s, l.s + l.xs.length - 1)}`);
 }
 
 if (args.includes("--concepts")) {
