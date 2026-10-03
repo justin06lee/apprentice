@@ -1,5 +1,6 @@
 /**
  * Search inside the open book (or, with a toggle, every book), as you type.
+ * Opening a hit turns to its page with the words marked on it.
  */
 import { Search } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -14,6 +15,15 @@ export function Snippet({ text }: { text: string }) {
       {parts.map((p, i) => (p.startsWith("\u0001") ? <mark key={i}>{p.slice(1, -1)}</mark> : <span key={i}>{p}</span>))}
     </span>
   );
+}
+
+/** The words of a query, for marking on the page. */
+export function searchTerms(q: string): string[] {
+  return q
+    .normalize("NFKC")
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((w) => w.length > 1)
+    .slice(0, 8);
 }
 
 export function SearchBox({ onClose }: { onClose(): void }) {
@@ -50,7 +60,7 @@ export function SearchBox({ onClose }: { onClose(): void }) {
 
   const open = (h: SearchHit) => {
     onClose();
-    void useReader.getState().goToBlock(h.blockId);
+    void useReader.getState().goToBlock(h.blockId, searchTerms(q));
   };
 
   return (
@@ -90,7 +100,7 @@ export function SearchBox({ onClose }: { onClose(): void }) {
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div className="sub">
                   {all ? `${h.bookTitle} · ` : ""}
-                  {h.unitTitle}
+                  {h.unitTitle} · p. {h.page + 1}
                 </div>
                 <div className="search-line">
                   <Snippet text={h.snippet} />

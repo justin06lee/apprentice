@@ -4,6 +4,8 @@
  * here touches I/O.
  */
 
+import type { Trim } from "./pages.js";
+
 export type BookStatus = "importing" | "ready" | "error";
 
 export interface Book {
@@ -28,8 +30,6 @@ export interface Book {
   unitCount: number;
   /** Total reading time recorded in this book, in milliseconds. */
   timeMs: number;
-  /** The book's body text size in points; figures scale by reader size ÷ this. */
-  bodySize: number;
 }
 
 /**
@@ -46,6 +46,7 @@ export interface Section {
   unitId: number;
   level: number;
   title: string;
+  /** Zero-based page the section starts on. */
   page: number;
   /** The heading block that opens the section, when it has one. */
   blockId: number | null;
@@ -90,55 +91,42 @@ export const MarkFlag = {
   MATH: 32,
 } as const;
 
-export interface CustomText {
-  text: string;
-  source: "user" | "ai";
-  at: number;
-}
-
-export interface Block {
-  id: number;
-  unitId: number;
-  sectionId: number;
-  ord: number;
-  type: BlockType;
-  /** Heading level (1 = chapter), or list nesting depth. */
-  level: number;
-  /** The text as the book printed it. Images carry their extracted text here, for search and context. */
-  text: string;
-  marks: Mark[];
-  /** Zero-based page index in the source PDF. */
-  page: number;
-  /** File name of the block's image (figure, equation, table), under the book's asset folder. */
-  asset: string | null;
-  /** Asset size in CSS pixels at 1×, so the layout never jumps while it loads. */
-  width: number;
-  height: number;
-  /** Nonzero when the block sits in a boxed callout; blocks sharing it share a box. */
-  boxed: number;
-  /** A footnote's marker, a list item's bullet, a heading's number. */
-  label: string | null;
-  /** The reader's own version of this block, when they have one. */
-  custom: CustomText | null;
-}
-
 export type HighlightColor = "yellow" | "green" | "blue" | "pink" | "purple";
 export const HIGHLIGHT_COLORS: HighlightColor[] = ["yellow", "green", "blue", "pink", "purple"];
 
-export interface Highlight {
-  id: number;
-  bookId: string;
-  blockId: number;
-  unitId: number;
-  /** Offsets into the block's displayed text (custom text when the block has one). */
+/**
+ * A stretch of a page: offsets into its text layer (shared/pages.ts), and
+ * the words, so it can find its place again if the layer ever changes.
+ */
+export interface Passage {
+  page: number;
   start: number;
   end: number;
-  /** The highlighted words, kept so the mark can find its place again if the text changes. */
   quote: string;
-  /** Which text the offsets index: the book's or the reader's own. */
-  onCustom: boolean;
+}
+
+export interface Highlight extends Passage {
+  id: number;
+  bookId: string;
+  /** The block the highlight falls in, when the import found one: how it knows its chapter. */
+  blockId: number | null;
+  unitId: number | null;
   color: HighlightColor;
   note: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * The reader's own version of a passage — written by hand or by a model.
+ * It never replaces the book's text: it is laid over the passage on the
+ * page like a slip of paper, and lifting it shows the book again.
+ */
+export interface Version extends Passage {
+  id: number;
+  bookId: string;
+  text: string;
+  source: "user" | "ai";
   createdAt: number;
   updatedAt: number;
 }
@@ -163,7 +151,9 @@ export interface SketchData {
 export interface Sketch {
   id: number;
   bookId: string;
-  blockId: number | null;
+  /** The page it is pinned to, and where on it (points from the top), or null for a loose sketch. */
+  page: number | null;
+  y: number | null;
   unitId: number | null;
   title: string;
   data: SketchData;
@@ -183,6 +173,8 @@ export interface Card {
   bookId: string;
   blockId: number | null;
   unitId: number | null;
+  /** The page it was made from, for going back to it. */
+  page: number | null;
   kind: CardKind;
   /** basic: the question. cloze: the text with {{c1::answer}} gaps. */
   front: string;
@@ -270,6 +262,7 @@ export interface ConceptMention {
   bookTitle: string;
   blockId: number;
   unitId: number;
+  page: number;
   unitTitle: string;
   snippet: string;
   isDefinition: boolean;
@@ -286,7 +279,8 @@ export interface ConceptDetail {
 export interface ChatThread {
   id: number;
   bookId: string;
-  blockId: number | null;
+  /** The page it began on. */
+  page: number | null;
   title: string;
   createdAt: number;
   updatedAt: number;
@@ -300,7 +294,10 @@ export interface ChatMessage {
   content: string;
   /** The passage the question was about, when it was asked from a selection. */
   quote: string | null;
-  blockId: number | null;
+  /** Where that passage is; start and end are null for a whole region or page. */
+  page: number | null;
+  start: number | null;
+  end: number | null;
   createdAt: number;
 }
 
@@ -309,35 +306,37 @@ export interface SearchHit {
   bookTitle: string;
   blockId: number;
   unitId: number;
+  page: number;
   unitTitle: string;
   /** Snippet with matches wrapped in \u0001 … \u0002. */
   snippet: string;
 }
 
 export interface ReadingPosition {
-  unitId: number;
-  blockId: number | null;
-  /** Pixels scrolled past the top of that block. */
-  offset: number;
-}
-
-export interface UnitContent {
-  unitId: number;
-  blocks: Block[];
-  highlights: Highlight[];
-  /** Block ids already read. */
-  read: number[];
-  sketches: Array<Pick<Sketch, "id" | "blockId" | "title" | "svg" | "updatedAt">>;
-  /** Cards drawn from this unit, by status. */
-  cards: { pending: number; active: number };
-  /** Block ids with an attached chat thread. */
-  chats: number[];
+  /** The page last open (the left one of a spread). */
+  page: number;
 }
 
 export interface OpenedBook {
   book: Book;
   sections: Section[];
   position: ReadingPosition | null;
+  /** Every page's size in points, so the book is laid out before a page is drawn. */
+  sizes: Array<[number, number]>;
+  /** Where its pages are printed, for trimming the margins; null when that could not be told. */
+  trim: Trim | null;
+}
+
+/** Everything the reader has left in a book, loaded once when it opens. */
+export interface Annotations {
+  highlights: Highlight[];
+  versions: Version[];
+  /** Sketches pinned to a page. */
+  sketches: Array<{ id: number; page: number; y: number; title: string }>;
+  /** Where conversations began, for the margin. */
+  chats: Array<{ id: number; page: number; start: number | null }>;
+  /** Pages already read. */
+  read: number[];
 }
 
 export interface AiModel {
@@ -356,13 +355,20 @@ export interface AiStatus {
 
 export type ThemeName = "light" | "sepia" | "dark" | "system";
 
+export type PageLayout = "auto" | "spread" | "single";
+
 export interface Settings {
   theme: ThemeName;
-  readerFont: "serif" | "sans";
-  fontSize: number;
-  lineHeight: number;
-  /** Reading column width in `ch`. */
-  measure: number;
+  /** Two pages side by side, one at a time, or two when the window is wide enough. */
+  pageLayout: PageLayout;
+  /** Pages larger than fitting the window, as a factor of fitting it. */
+  pageZoom: number;
+  /** Turn pages with a page-turn, rather than at once. */
+  pageTurn: boolean;
+  /** In the Night theme, darken the pages too. */
+  nightPages: boolean;
+  /** Show the printed part of each page, without most of its blank margin. */
+  pageTrim: boolean;
   /** yagami model id; null means yagami's default. */
   model: string | null;
   /** Model for background work (cards, concepts); null means `model`. */
@@ -381,10 +387,11 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: "system",
-  readerFont: "serif",
-  fontSize: 19,
-  lineHeight: 1.65,
-  measure: 68,
+  pageLayout: "auto",
+  pageZoom: 1,
+  pageTurn: true,
+  nightPages: true,
+  pageTrim: true,
   model: null,
   backgroundModel: null,
   aiCards: true,

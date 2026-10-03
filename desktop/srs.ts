@@ -19,12 +19,14 @@ import type {
 } from "../shared/types.js";
 import { startOfToday, type Ctx } from "./context.js";
 import { tx } from "./db.js";
+import { unitAt } from "./library.js";
 
 interface CardRow {
   id: number;
   book_id: string;
   block_id: number | null;
   unit_id: number | null;
+  page: number | null;
   kind: string;
   front: string;
   back: string;
@@ -49,6 +51,7 @@ export function cardFromRow(r: CardRow): Card {
     bookId: r.book_id,
     blockId: r.block_id === null ? null : Number(r.block_id),
     unitId: r.unit_id === null ? null : Number(r.unit_id),
+    page: r.page === null || r.page === undefined ? null : Number(r.page),
     kind: r.kind as CardKind,
     front: r.front,
     back: r.back,
@@ -288,17 +291,28 @@ export class Scheduler {
     return this.get(cardId);
   }
 
-  create(input: { bookId: string; blockId: number | null; kind: CardKind; front: string; back: string; source?: Card["source"]; status?: Card["status"] }): Card {
-    const unit = input.blockId
-      ? (this.ctx.db.prepare("select unit_id from blocks where id = ?").get(input.blockId) as { unit_id: number } | undefined)
+  create(input: {
+    bookId: string;
+    blockId?: number | null;
+    page?: number | null;
+    kind: CardKind;
+    front: string;
+    back: string;
+    source?: Card["source"];
+    status?: Card["status"];
+  }): Card {
+    const block = input.blockId
+      ? (this.ctx.db.prepare("select unit_id, page from blocks where id = ?").get(input.blockId) as { unit_id: number; page: number } | undefined)
       : undefined;
+    const page = input.page ?? (block ? Number(block.page) : null);
+    const unit = block ? Number(block.unit_id) : page === null ? null : unitAt(this.ctx.db, input.bookId, page);
     const now = Date.now();
     const r = this.ctx.db
       .prepare(
-        `insert into cards (book_id, block_id, unit_id, kind, front, back, source, status, due, created_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `insert into cards (book_id, block_id, unit_id, page, kind, front, back, source, status, due, created_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(input.bookId, input.blockId, unit?.unit_id ?? null, input.kind, input.front, input.back, input.source ?? "user", input.status ?? "active", now, now);
+      .run(input.bookId, input.blockId ?? null, unit, page, input.kind, input.front, input.back, input.source ?? "user", input.status ?? "active", now, now);
     const id = Number(r.lastInsertRowid);
     this.ctx.emit("cards.changed", { bookId: input.bookId });
     return this.get(id);

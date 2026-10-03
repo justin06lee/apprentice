@@ -5,7 +5,7 @@
 # apprentice
 
 **A study desk for textbooks.**<br>
-*Drop in a PDF. Read it as clean, reflowed text; highlight, note, sketch and ask as you go; remember it with spaced repetition; and watch a map of what you know fill in.*
+*Drop in a PDF. Read its own pages, open like a book; highlight, note, sketch and ask as you go; remember it with spaced repetition; and watch a map of what you know fill in.*
 
 </div>
 
@@ -13,14 +13,16 @@
 
 ## What it does
 
-- **Reads the book properly.** A textbook PDF is parsed into structure, not scraped into text: chapters and sections (from the PDF's outline, or from its type when it has none), paragraphs rejoined across lines, columns and page breaks, hyphenation undone where the book itself spells the word whole, code kept as code, footnotes linked to their markers and set under the paragraph that cites them, figures and tables cut from the page with their captions, display mathematics rendered from the page (reflowed math is unreadable), callout boxes kept as boxes, running heads and page numbers dropped. The original pages are always one click away.
+- **The book as printed.** You read the PDF's own pages — every figure, equation and table exactly as typeset — two at a time like an open book (one at a time in a narrow window), turned with a page-turn by arrow keys, the wheel, a swipe or the buttons beside them. Margins are trimmed so the type is as large as the window allows; a scrubber under the book shows the chapters and the pages you've read. Light, sepia and night themes, the pages included.
+- **Select right on the page.** Under each page is its text layer, read from the PDF with every character's position, so a selection — or a double-click on a word, a triple-click on a paragraph — lands exactly on the printed glyphs, and can run from the left page onto the right.
 - **Highlights and notes**, five colors, on any selection; a notes panel per book, searchable and exportable as Markdown.
-- **Ask about any passage.** Select text and ask; the model sees the passage, the chapter around it, your highlights and notes, and which of the chapter's concepts you know, are learning, or haven't met. Answers render Markdown and LaTeX.
-- **Rewrite a passage your way** — by hand, or by asking for it (simpler, with an example, step by step…). After an explanation helped, apprentice offers to fold it into the passage. Your version replaces the book's for you, marked in the margin; the book's text is always one click away. Never pushed: it's a passage menu item and a quiet offer.
-- **Draw** in a sketch tab beside the text — pressure-sensitive pen, shapes, arrows, text, an infinite canvas — and pin a sketch to a passage.
+- **Ask about any passage — or any figure.** Select text and ask, or box a figure, an equation or a table (the box tool, or Alt-drag) and the model sees it as a picture. It also reads the pages around it, your highlights and notes, and which of the chapter's concepts you know, are learning, or haven't met. Answers render Markdown and LaTeX.
+- **Rewrite a passage your way** — by hand, or by asking for it (simpler, with an example, step by step…). After an explanation helped, apprentice offers to fold it into the passage. Your version is laid over the passage like a slip of paper pasted into the book, set in the book's type size; lift it and the book's text is underneath, untouched. Never pushed: it's a menu item and a quiet offer.
+- **Draw** in a sketch tab beside the text — pressure-sensitive pen, shapes, arrows, text, an infinite canvas — and pin a sketch beside a passage; it waits in that page's margin.
+- **Structure from the PDF.** Behind the pages, the importer reads the book's structure — chapters and sections (from its outline, or its type when it has none), paragraphs, definitions, footnotes, running heads to ignore — for the contents, search, progress, the concepts, and the model's context. It is never what you look at.
 - **Flashcards with FSRS.** Cards appear as you read: each definition the book sets in bold becomes a cloze card at import, waiting until you've read its chapter; finishing a chapter has a model write a set that tests understanding. Make your own from any selection (cloze or question, or have a model write it). Reviews are scheduled by FSRS ([ts-fsrs](https://github.com/open-spaced-repetition/ts-fsrs)) at the recall you choose.
 - **A knowledge map** of every concept your books teach and how they relate — co-occurrence from the text, typed relations (prerequisite, part-of, example-of…) from a model — colored by what you know: not met yet, read, learning, known, fading. It tells you what to study next: the central concepts you're least secure on.
-- **Progress** per chapter and per book from what you've actually had on screen long enough to read, reading time, and where you left off — to the paragraph.
+- **Progress** per chapter and per book from the pages you've actually had open long enough to read them, reading time, and where you left off.
 
 Everything is local: one SQLite database and a folder per book.
 
@@ -47,17 +49,18 @@ bun run dev                          # Vite + esbuild watch + Electron
 bun run dev -- --data-dir=/tmp/lib   # with a scratch library
 bun run typecheck && bun run test    # APPRENTICE_TEST_PDF=thinkpython2.pdf adds a real-book parse test
 bun scripts/parse.ts book.pdf --dump out.md --concepts   # what the importer makes of a PDF
+bun scripts/parse.ts book.pdf --pages 61-61 --layer 61   # one page's text layer, as selection sees it
 bun run icon                         # redraw the icon (scripts/icon.ts) and every PNG size in build/
 ```
 
 | | |
 |---|---|
-| `desktop/ingest/` | the importer: `extract.ts` (MuPDF characters → styled lines), `analyze.ts` (lines → structure), `units.ts` (reading units), `concepts.ts` (terms, mentions, links, first cards), `worker.ts` (one import, one transaction) |
-| `desktop/` | main process: `library.ts` (books, reading, search), `srs.ts` (FSRS), `knowledge/graph.ts` (mastery), `ai.ts` (yagami), `render*.ts` (original pages), `db.ts` (schema) |
-| `shared/` | types and the IPC contract (`api.ts`) both sides build against |
-| `web/src/` | the window: `views/reader` (the column, menus, editor), `views/panel` (ask, notes, cards, concepts, sketch), `views/review`, `views/map`, `views/sketch` |
+| `desktop/ingest/` | the importer: `extract.ts` (MuPDF characters → styled lines), `analyze.ts` (lines → structure), `units.ts` (reading units), `concepts.ts` (terms, mentions, links, first cards), `worker.ts` (one import, one transaction); `pagetext.ts` (a page's text layer and printed area, for the page view) |
+| `desktop/` | main process: `library.ts` (books, reading, annotations, search), `srs.ts` (FSRS), `knowledge/graph.ts` (mastery), `ai.ts` (yagami), `render*.ts` (page pictures, text layers, trims, regions — on a worker), `db.ts` (schema) |
+| `shared/` | types, the IPC contract (`api.ts`), and `pages.ts`: the text layer's geometry, which main and window must agree on |
+| `web/src/` | the window: `views/reader` (`Book.tsx` the spread, turns and pointer; `Sheet.tsx` one page and what's drawn on it; `Slip.tsx` your versions; menus), `views/panel` (ask, notes, cards, concepts, sketch), `views/review`, `views/map`, `views/sketch` |
 
-Data lives in Electron's user-data folder (`~/.config/apprentice` on Linux): `apprentice.db` and `books/<id>/` with the source PDF, cut-out figures, and a cache of rendered pages.
+Data lives in Electron's user-data folder (`~/.config/apprentice` on Linux): `apprentice.db` and `books/<id>/` with the source PDF and caches of rendered pages, page text layers and the book's printed area.
 
 ## License
 

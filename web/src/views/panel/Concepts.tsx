@@ -8,7 +8,7 @@ import type { Concept, ConceptDetail, KnowledgeGraph } from "../../../../shared/
 import { api, errorText, on } from "../../api";
 import { percent } from "../../lib/format";
 import { useApp } from "../../store";
-import { useReader } from "../reader/state";
+import { useReader, useUnitId } from "../reader/state";
 
 export const STATE_LABEL: Record<Concept["state"], string> = {
   unseen: "Not met yet",
@@ -43,10 +43,10 @@ function Detail({ id }: { id: number }) {
       )}
       <div className="concept-mentions">
         {d.mentions.slice(0, 5).map((m) => (
-          <button key={m.blockId} className="mention" onClick={() => void useReader.getState().goToBlock(m.blockId)}>
+          <button key={m.blockId} className="mention" onClick={() => void useReader.getState().goToBlock(m.blockId, [d.concept.name])}>
             <span className="mention-where">
               {m.isDefinition ? "Defined · " : ""}
-              {m.unitTitle}
+              {m.unitTitle} · p. {m.page + 1}
             </span>
             <span className="mention-text">{m.snippet}</span>
           </button>
@@ -58,7 +58,7 @@ function Detail({ id }: { id: number }) {
 
 export function Concepts() {
   const bookId = useReader((s) => s.bookId)!;
-  const unitId = useReader((s) => s.unitId);
+  const unitId = useUnitId();
   const ai = useApp((s) => s.ai);
   const go = useApp((s) => s.go);
   const toast = useApp((s) => s.toast);

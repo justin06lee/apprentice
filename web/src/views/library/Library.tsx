@@ -135,8 +135,8 @@ export function Library() {
           </div>
           <h1>Your study desk is empty</h1>
           <p>
-            Add a textbook PDF. apprentice reads it into clean, reflowed text — headings, figures, footnotes and equations intact — and maps
-            what it teaches, so you can highlight, ask, sketch and remember as you go.
+            Add a textbook PDF. apprentice opens it like a book — its own pages, two at a time — learns its chapters and maps what it teaches,
+            so you can highlight, ask, sketch and remember right on the page.
           </p>
           <button className="btn primary large" onClick={add}>
             <Plus size={16} /> Add a textbook

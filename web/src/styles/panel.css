@@ -771,3 +771,10 @@
 .sketch-thumb-meta {
   font-size: 11px;
 }
+.note-page {
+  position: absolute;
+  top: 9px;
+  right: 10px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}

@@ -82,6 +82,8 @@ async function main(): Promise<void> {
   let settings = loadSettings(db);
 
   let win: BrowserWindow | null = null;
+  const pages = new PageRenderer(path.join(here, "render-worker.mjs"));
+  const source = (bookId: string) => path.join(bookDir({ dataDir }, bookId), "source.pdf");
   const ctx: Ctx = {
     db,
     dataDir,
@@ -90,6 +92,12 @@ async function main(): Promise<void> {
       if (win && !win.isDestroyed()) win.webContents.send("event", event, payload);
     },
     settings: () => settings,
+    pages: {
+      text: (bookId, page) => pages.text(source(bookId), path.join(bookDir({ dataDir }, bookId), "text"), page),
+      sizes: (bookId) => pages.pageSizes(source(bookId)),
+      trim: (bookId) => pages.trim(source(bookId), path.join(bookDir({ dataDir }, bookId), "trim-v1.json")),
+      region: (bookId, page, rect, width) => pages.region(source(bookId), page, rect, width),
+    },
   };
 
   const srs = new Scheduler(ctx);
@@ -97,10 +105,8 @@ async function main(): Promise<void> {
   const ai = new Ai(ctx, srs, knowledge);
   const library = new Library(ctx, path.join(here, "ingest-worker.mjs"), (bookId, unitId) => void ai.onUnitRead(bookId, unitId));
   const sketches = new Sketches(ctx);
-  const pages = new PageRenderer(path.join(here, "render-worker.mjs"));
 
   // ── apprentice:// ────────────────────────────────────────────────────
-  const types: Record<string, string> = { ".jpg": "image/jpeg", ".png": "image/png" };
   const immutable = { "cache-control": "public, max-age=31536000, immutable" };
   protocol.handle("apprentice", async (request) => {
     try {
@@ -108,10 +114,9 @@ async function main(): Promise<void> {
       const [id, kind, name] = url.pathname.replace(/^\/+/, "").split("/");
       if (url.host !== "book" || !id || !/^[a-z0-9]+$/.test(id)) return new Response(null, { status: 404 });
       const dir = bookDir(ctx, id);
-      if (kind === "cover.jpg" || (kind === "assets" && name && /^\d+\.(png|jpg)$/.test(name))) {
-        const file = kind === "assets" ? path.join(dir, "assets", name!) : path.join(dir, "cover.jpg");
-        const data = await fs.promises.readFile(file);
-        return new Response(data, { headers: { "content-type": types[path.extname(file)]!, ...immutable } });
+      if (kind === "cover.jpg") {
+        const data = await fs.promises.readFile(path.join(dir, "cover.jpg"));
+        return new Response(data, { headers: { "content-type": "image/jpeg", ...immutable } });
       }
       if (kind === "page" && name && /^\d+$/.test(name)) {
         const width = Math.max(200, Math.min(3200, Math.round(Number(url.searchParams.get("w") || 1000) / 100) * 100));
@@ -180,17 +185,18 @@ async function main(): Promise<void> {
       retry: (id) => library.retry(id),
     },
     reader: {
-      unit: (bookId, unitId) => library.unit(bookId, unitId),
+      pageText: (bookId, page) => ctx.pages.text(bookId, page),
+      annotations: (bookId) => library.annotations(bookId),
       savePosition: (bookId, position) => library.savePosition(bookId, position),
-      markRead: (bookId, unitId, reads) => library.markRead(bookId, unitId, reads, unlock),
+      readPages: (bookId, reads) => library.readPages(bookId, reads, unlock),
       markUnit: (bookId, unitId, read) => library.markUnit(bookId, unitId, read, unlock),
       addTime: (bookId, ms) => library.addTime(bookId, ms),
       search: (query, bookId) => library.search(query, bookId),
       locate: (blockId) => library.locate(blockId),
-      pageSizes: (bookId) => pages.pageSizes(library.sourcePath(bookId)),
     },
-    blocks: {
-      edit: (blockId, text, source) => library.editBlock(blockId, text, source),
+    versions: {
+      save: (input) => library.saveVersion(input),
+      remove: (id) => library.removeVersion(id),
     },
     highlights: {
       add: (input) => library.addHighlight(input),

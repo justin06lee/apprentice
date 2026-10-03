@@ -56,6 +56,8 @@ export interface XLine {
   charWidth: number;
   /** How many cells the line spans: pieces of one row with real gaps between them. */
   cells: number;
+  /** With `positions`: each character's left edge, then the last one's right edge. */
+  xs?: number[];
 }
 
 export interface XImage {
@@ -75,6 +77,9 @@ export interface XVector {
 export interface XPage {
   index: number;
   label: string;
+  /** The page's top-left corner; coordinates below are in the same space. */
+  x0: number;
+  y0: number;
   width: number;
   height: number;
   lines: XLine[];
@@ -192,7 +197,14 @@ export class Extractor {
   readonly fonts: FontInfo[] = [];
   private fontIndex = new Map<number, number>();
 
-  constructor(readonly doc: mupdf.Document) {}
+  /**
+   * `positions` keeps where every character starts, which the page view's
+   * text layer needs and an import, holding the whole book at once, does not.
+   */
+  constructor(
+    readonly doc: mupdf.Document,
+    private readonly positions = false,
+  ) {}
 
   private font(font: mupdf.Font): number {
     const key = font.pointer as unknown as number;
@@ -294,6 +306,8 @@ export class Extractor {
     return {
       index,
       label: label || String(index + 1),
+      x0: bx0,
+      y0: by0,
       width: bx1 - bx0,
       height: by1 - by0,
       lines,
@@ -382,7 +396,13 @@ export class Extractor {
 
     const spans: XSpan[] = [];
     let text = "";
+    const xs: number[] | undefined = this.positions ? [] : undefined;
     for (const ch of cs) {
+      if (xs) {
+        // A character outside the BMP is two code units; offsets count both.
+        xs.push(ch.x0);
+        if (ch.c.length > 1) xs.push((ch.x0 + ch.x1) / 2);
+      }
       const last = spans[spans.length - 1];
       const flags = ch.c === " " && last ? last.flags : ch.flags;
       if (last && last.flags === flags && (ch.c === " " || (last.font === ch.font && Math.abs(last.size - ch.size) < 0.3))) {
@@ -412,6 +432,7 @@ export class Extractor {
       math,
       charWidth: n ? widthSum / n : size * 0.5,
       cells: 1,
+      ...(xs ? { xs: [...xs, cs[cs.length - 1]!.x1] } : {}),
     };
   }
 }

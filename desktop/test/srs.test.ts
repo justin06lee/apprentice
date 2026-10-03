@@ -13,7 +13,15 @@ function setup() {
   db.prepare("insert into books (id, title, file_name, file_hash, status, added_at) values ('b', 'B', 'b.pdf', 'h', 'ready', 0)").run();
   db.prepare("insert into sections (id, book_id, ord, level, title, page, kind, is_unit, unit_id, weight) values (1, 'b', 0, 1, 'One', 0, 'body', 1, 1, 100)").run();
   const events: string[] = [];
-  const ctx: Ctx = { db, dataDir: dir, dbPath: path.join(dir, "test.db"), emit: (e) => void events.push(e), settings: () => DEFAULT_SETTINGS };
+  const none = () => Promise.reject(new Error("no pages in this test"));
+  const ctx: Ctx = {
+    db,
+    dataDir: dir,
+    dbPath: path.join(dir, "test.db"),
+    emit: (e) => void events.push(e),
+    settings: () => DEFAULT_SETTINGS,
+    pages: { text: none, sizes: none, trim: none, region: none },
+  };
   return { db, srs: new Scheduler(ctx), events };
 }
 

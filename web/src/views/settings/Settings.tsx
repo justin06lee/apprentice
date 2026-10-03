@@ -1,7 +1,7 @@
 /** Settings: how the book looks, which model helps, how reviews are paced. */
 import { CircleCheck, CircleX, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { ThemeName } from "../../../../shared/types";
+import type { PageLayout, ThemeName } from "../../../../shared/types";
 import { Switch } from "../../components/ui";
 import { mod } from "../../lib/format";
 import { useApp } from "../../store";
@@ -35,6 +35,11 @@ export function Settings() {
     ["dark", "Night"],
     ["system", "Match system"],
   ];
+  const layouts: Array<[PageLayout, string]> = [
+    ["auto", "Auto"],
+    ["spread", "Two pages"],
+    ["single", "One page"],
+  ];
 
   return (
     <div className="settings">
@@ -52,24 +57,23 @@ export function Settings() {
               ))}
             </div>
           </Row>
-          <Row title="Typeface" hint="Literata is drawn for long reading on screens.">
+          <Row title="Pages" hint="Two side by side like an open book, one at a time, or two when the window is wide enough.">
             <div className="segmented">
-              <button className={s.readerFont === "serif" ? "on" : ""} onClick={() => void set({ readerFont: "serif" })}>
-                Literata (serif)
-              </button>
-              <button className={s.readerFont === "sans" ? "on" : ""} onClick={() => void set({ readerFont: "sans" })}>
-                Inter (sans)
-              </button>
+              {layouts.map(([l, label]) => (
+                <button key={l} className={s.pageLayout === l ? "on" : ""} onClick={() => void set({ pageLayout: l })}>
+                  {label}
+                </button>
+              ))}
             </div>
           </Row>
-          <Row title="Text size" hint={`${s.fontSize}px`}>
-            <input type="range" min={14} max={28} step={1} value={s.fontSize} onChange={(e) => void set({ fontSize: Number(e.target.value) })} />
+          <Row title="Trim the margins" hint="Show the printed part of each page larger, without most of its blank margin.">
+            <Switch on={s.pageTrim} onChange={(v) => void set({ pageTrim: v })} label="Trim the margins" />
           </Row>
-          <Row title="Line spacing" hint={s.lineHeight.toFixed(2)}>
-            <input type="range" min={1.3} max={2.1} step={0.05} value={s.lineHeight} onChange={(e) => void set({ lineHeight: Number(e.target.value) })} />
+          <Row title="Turn pages like paper" hint="A page-turn between spreads. Off, pages change at once.">
+            <Switch on={s.pageTurn} onChange={(v) => void set({ pageTurn: v })} label="Turn pages like paper" />
           </Row>
-          <Row title="Column width" hint={`${s.measure} characters`}>
-            <input type="range" min={48} max={96} step={2} value={s.measure} onChange={(e) => void set({ measure: Number(e.target.value) })} />
+          <Row title="Darken pages at night" hint="In the Night theme, show the book's pages light on dark.">
+            <Switch on={s.nightPages} onChange={(v) => void set({ nightPages: v })} label="Darken pages at night" />
           </Row>
         </section>
 

@@ -17,20 +17,23 @@
 import { Yagami, type MessageStreamEvent } from "@justin06lee/yagami";
 import { randomUUID } from "node:crypto";
 import type { ChatContext } from "../shared/api.js";
-import type { AiModel, AiStatus, CardKind, ChatMessage, ChatThread, Job } from "../shared/types.js";
+import { cleanText, rangeInRect, type PageText } from "../shared/pages.js";
+import type { AiModel, AiStatus, CardKind, ChatMessage, ChatThread, Job, Passage } from "../shared/types.js";
 import type { Ctx } from "./context.js";
 import { tx } from "./db.js";
 import { termKey, TermMatcher } from "./knowledge/terms.js";
 import type { Knowledge } from "./knowledge/graph.js";
-import { UNIT_DONE } from "./library.js";
+import { UNIT_DONE, unitAt } from "./library.js";
 import type { Scheduler } from "./srs.js";
 
-type Msg = { role: "user" | "assistant"; content: string };
+type Block = { type: "text"; text: string } | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
+type Msg = { role: "user" | "assistant"; content: string | Block[] };
 
 const PERSONA = `You are apprentice, a study companion built into a textbook reader. The reader is working through a book and asks you about it as they go.
 
 How to answer:
 - Ground answers in the book's own text, which you are given. Use its notation and terminology; when you go beyond the book, say so.
+- The text comes from the PDF's text layer, so mathematics in it may be garbled; read it for what the book must mean, and say so when you cannot tell. When you are shown a picture of part of a page, that is the authority.
 - Be direct and concise. Lead with the answer, then the reasoning. Short paragraphs; lists only when the content is a list.
 - Explain at the level of someone reading this chapter. Build on what the reader already knows (you are told which concepts they know well and which they have not met yet) and do not lean on concepts they have not reached without explaining them.
 - Write mathematics in LaTeX: $…$ inline, $$…$$ for displays. Code goes in fenced blocks with a language.
@@ -43,7 +46,9 @@ function chatFromRow(r: Record<string, unknown>): ChatMessage {
     role: String(r["role"]) as "user" | "assistant",
     content: String(r["content"]),
     quote: r["quote"] === null ? null : String(r["quote"]),
-    blockId: r["block_id"] === null ? null : Number(r["block_id"]),
+    page: r["page"] === null || r["page"] === undefined ? null : Number(r["page"]),
+    start: r["start"] === null || r["start"] === undefined ? null : Number(r["start"]),
+    end: r["end"] === null || r["end"] === undefined ? null : Number(r["end"]),
     createdAt: Number(r["created_at"]),
   };
 }
@@ -125,47 +130,39 @@ export class Ai {
     return b ?? { title: "this book", author: null };
   }
 
-  /** The unit's text around `anchors`, about `budget` characters, the anchors marked. */
-  private surrounding(unitId: number, anchors: number[], budget = 9000): string {
-    const blocks = this.ctx.db
-      .prepare("select id, type, level, label, coalesce(custom_text, text) as text from blocks where unit_id = ? order by ord")
-      .all(unitId) as Array<{ id: number; type: string; level: number; label: string | null; text: string }>;
-    if (!blocks.length) return "";
-    const render = (b: (typeof blocks)[number]) => {
-      const mark = anchors.includes(Number(b.id));
-      let t = b.text;
-      if (b.type === "heading") t = `${"#".repeat(Math.min(4, b.level + 1))} ${b.label ? `${b.label} ` : ""}${t}`;
-      else if (b.type === "equation") t = `[display math: ${t}]`;
-      else if (b.type === "figure") t = `[figure${t ? `: ${t.slice(0, 200)}` : ""}]`;
-      else if (b.type === "table") t = `[table]\n${t}`;
-      else if (b.type === "code") t = "```\n" + t + "\n```";
-      else if (b.type === "footnote") t = `[footnote ${b.label ?? ""}] ${t}`;
-      else if (b.type === "list") t = `${b.label ?? "•"} ${t}`;
-      return mark ? `>>> ${t} <<<` : t;
-    };
-    let center = blocks.findIndex((b) => anchors.includes(Number(b.id)));
-    if (center < 0) center = 0;
-    const picked = new Set<number>([center]);
-    let used = blocks[center]!.text.length;
-    let lo = center - 1;
-    let hi = center + 1;
-    while (used < budget && (lo >= 0 || hi < blocks.length)) {
-      if (lo >= 0) {
-        picked.add(lo);
-        used += blocks[lo]!.text.length;
-        lo--;
-      }
-      if (hi < blocks.length && used < budget) {
-        picked.add(hi);
-        used += blocks[hi]!.text.length;
-        hi++;
-      }
+  private async pageText(bookId: string, page: number): Promise<PageText | null> {
+    try {
+      return await this.ctx.pages.text(bookId, page);
+    } catch {
+      return null;
     }
-    // The chapter's opening heading always comes along, for orientation.
-    picked.add(0);
-    return [...picked]
-      .sort((a, b) => a - b)
-      .map((i, n, all) => (n > 0 && i !== all[n - 1]! + 1 ? `[…]\n\n${render(blocks[i]!)}` : render(blocks[i]!)))
+  }
+
+  /**
+   * The pages around where the reader is, as prose, about `budget`
+   * characters: the pages in front of them, then a page either side. The
+   * passage they asked about is marked >>> like this <<<.
+   */
+  private async around(bookId: string, pages: number[], passage: Passage | null, budget = 12000): Promise<string> {
+    const count = Number((this.ctx.db.prepare("select page_count from books where id = ?").get(bookId) as { page_count: number } | undefined)?.page_count ?? 0);
+    const lo = Math.min(...pages);
+    const hi = Math.max(...pages);
+    const order = [...pages, lo - 1, hi + 1].filter((p, i, all) => p >= 0 && p < count && all.indexOf(p) === i);
+    const texts = new Map<number, string>();
+    let used = 0;
+    for (const p of order) {
+      const pt = await this.pageText(bookId, p);
+      if (!pt || !pt.text.trim()) continue;
+      let raw = pt.text;
+      if (passage && passage.page === p && passage.end > passage.start) raw = `${raw.slice(0, passage.start)}>>> ${raw.slice(passage.start, passage.end)} <<<${raw.slice(passage.end)}`;
+      const text = cleanText(raw);
+      if (used + text.length > budget && texts.size) break;
+      texts.set(p, text);
+      used += text.length;
+    }
+    return [...texts.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([p, t]) => `[page ${p + 1}]\n${t}`)
       .join("\n\n");
   }
 
@@ -201,36 +198,59 @@ export class Ai {
     return parts.join("\n\n");
   }
 
-  private unitTitle(unitId: number): string {
+  private unitTitle(unitId: number | null): string {
+    if (unitId === null) return "";
     return (this.ctx.db.prepare("select title from sections where id = ?").get(unitId) as { title: string } | undefined)?.title ?? "";
   }
 
   // ── streaming ──────────────────────────────────────────────────────────
 
+  /**
+   * `fallback` is the same request without pictures, for a model that does
+   * not take them: it is tried when the first is refused before a word of
+   * answer has come back.
+   */
   private stream(
     streamId: string,
     req: { system: string; messages: Msg[]; background?: boolean },
     onDone: (text: string) => ChatMessage | undefined,
+    fallback?: Msg[],
   ): void {
     const model = this.model(req.background);
-    const gen = this.client().messages.stream({
-      ...(model ? { model } : {}),
-      system: req.system,
-      messages: req.messages,
-      max_tokens: 4096,
-    });
-    this.streams.set(streamId, gen);
+    const open = (messages: Msg[]) => {
+      const gen = this.client().messages.stream({
+        ...(model ? { model } : {}),
+        system: req.system,
+        messages,
+        max_tokens: 4096,
+      });
+      this.streams.set(streamId, gen);
+      return gen;
+    };
+    let gen = open(req.messages);
     let text = "";
+    const take = (ev: MessageStreamEvent) => {
+      if (ev.type !== "content_block_delta") return;
+      const delta = (ev as { delta?: { type?: string; text?: string } }).delta;
+      if (delta?.type === "text_delta" && delta.text) {
+        text += delta.text;
+        this.ctx.emit("ai.stream", { streamId, kind: "delta", text: delta.text });
+      }
+    };
     void (async () => {
       try {
-        for await (const ev of gen) {
-          if (ev.type !== "content_block_delta") continue;
-          const delta = (ev as { delta?: { type?: string; text?: string } }).delta;
-          if (delta?.type === "text_delta" && delta.text) {
-            text += delta.text;
-            this.ctx.emit("ai.stream", { streamId, kind: "delta", text: delta.text });
-          }
+        // The first event is pulled by hand, so that a refused picture can
+        // be asked again without it; the loop then carries on from there.
+        let first: IteratorResult<MessageStreamEvent, void>;
+        try {
+          first = await gen.next();
+        } catch (error) {
+          if (!fallback || !/image/i.test(error instanceof Error ? error.message : String(error))) throw error;
+          gen = open(fallback);
+          first = await gen.next();
         }
+        if (!first.done) take(first.value);
+        for await (const ev of gen) take(ev);
         if (!this.streams.has(streamId)) return; // cancelled
         const message = onDone(text);
         this.ctx.emit("ai.stream", { streamId, kind: "done", text, ...(message ? { message } : {}) });
@@ -263,39 +283,58 @@ export class Ai {
 
   // ── ask ────────────────────────────────────────────────────────────────
 
-  ask(input: { threadId: number | null; bookId: string; message: string; context: ChatContext }): { threadId: number; streamId: string } {
+  async ask(input: { threadId: number | null; bookId: string; message: string; context: ChatContext }): Promise<{ threadId: number; streamId: string }> {
     const db = this.ctx.db;
     const now = Date.now();
-    const anchor = input.context.blockIds?.[0] ?? null;
+    const { passage, region } = input.context;
     let threadId = input.threadId;
     if (threadId === null) {
-      const title = (input.context.quote || input.message).replace(/\s+/g, " ").trim().slice(0, 80);
+      const title = (passage?.quote || input.message).replace(/\s+/g, " ").trim().slice(0, 80);
+      const page = passage?.page ?? region?.page ?? input.context.pages?.[0] ?? null;
       threadId = Number(
-        db.prepare("insert into chats (book_id, block_id, title, created_at, updated_at) values (?, ?, ?, ?, ?)").run(input.bookId, anchor, title, now, now)
+        db.prepare("insert into chats (book_id, block_id, page, title, created_at, updated_at) values (?, null, ?, ?, ?, ?)").run(input.bookId, page, title, now, now)
           .lastInsertRowid,
       );
     }
-    const thread = db.prepare("select * from chats where id = ?").get(threadId) as { block_id: number | null; book_id: string };
-    db.prepare("insert into chat_messages (chat_id, role, content, quote, block_id, created_at) values (?, 'user', ?, ?, ?, ?)").run(
+    const thread = db.prepare("select * from chats where id = ?").get(threadId) as { page: number | null; book_id: string };
+
+    // A region is a picture first; its words, when it has any, come along for a model that cannot see.
+    let picture: string | null = null;
+    let regionText = "";
+    if (region) {
+      const pt = await this.pageText(input.bookId, region.page);
+      const range = pt ? rangeInRect(pt, region.rect) : null;
+      regionText = pt && range ? cleanText(pt.text.slice(range[0], range[1])) : "";
+      try {
+        picture = Buffer.from(await this.ctx.pages.region(input.bookId, region.page, region.rect, 1400)).toString("base64");
+      } catch {
+        picture = null;
+      }
+    }
+    const quote = passage?.quote ?? (region ? `[the region of page ${region.page + 1} the reader drew a box around]${regionText ? ` ${regionText.slice(0, 600)}` : ""}` : null);
+    const at = passage ?? (region ? { page: region.page, start: null, end: null } : null);
+    db.prepare("insert into chat_messages (chat_id, role, content, quote, page, start, end, created_at) values (?, 'user', ?, ?, ?, ?, ?, ?)").run(
       threadId,
       input.message,
-      input.context.quote ?? null,
-      anchor,
+      quote,
+      at?.page ?? null,
+      at?.start ?? null,
+      at?.end ?? null,
       now,
     );
     db.prepare("update chats set updated_at = ? where id = ?").run(now, threadId);
 
-    const anchorBlock = anchor ?? thread.block_id;
-    const unitId =
-      input.context.unitId ??
-      (anchorBlock ? (db.prepare("select unit_id from blocks where id = ?").get(anchorBlock) as { unit_id: number } | undefined)?.unit_id : undefined);
+    const pages = passage ? [passage.page] : region ? [region.page] : input.context.pages?.length ? input.context.pages : thread.page !== null ? [Number(thread.page)] : [];
+    const unitId = pages.length ? unitAt(db, input.bookId, pages[0]!) : null;
     const book = this.bookInfo(input.bookId);
     let system = `${PERSONA}\n\nThe book: “${book.title}”${book.author ? ` by ${book.author}` : ""}.`;
-    if (unitId) {
-      const anchors = input.context.blockIds ?? (anchorBlock ? [anchorBlock] : []);
-      system += `\n\nThe reader is in “${this.unitTitle(Number(unitId))}”. Here is the text around where they are reading; the passage they are looking at is marked >>> like this <<<.\n\n<chapter_text>\n${this.surrounding(Number(unitId), anchors)}\n</chapter_text>`;
-      const reader = this.readerContext(input.bookId, Number(unitId));
-      if (reader) system += `\n\n<reader>\n${reader}\n</reader>`;
+    if (pages.length) {
+      const chapter = this.unitTitle(unitId);
+      system += `\n\nThe reader is on page ${pages.map((p) => p + 1).join("–")}${chapter ? `, in “${chapter}”` : ""}. Here is the text of the pages around them${passage ? "; the passage they are asking about is marked >>> like this <<<" : ""}.\n\n<pages>\n${await this.around(input.bookId, pages, passage ?? null)}\n</pages>`;
+      if (unitId !== null) {
+        const reader = this.readerContext(input.bookId, unitId);
+        if (reader) system += `\n\n<reader>\n${reader}\n</reader>`;
+      }
     }
     const history = (db.prepare("select * from chat_messages where chat_id = ? order by id").all(threadId) as Array<Record<string, unknown>>).map(chatFromRow);
     const messages: Msg[] = history.slice(-16).map((m) => ({
@@ -303,16 +342,35 @@ export class Ai {
       content: m.role === "user" && m.quote ? `About this passage:\n"""${m.quote}"""\n\n${m.content}` : m.content,
     }));
     while (messages.length && messages[0]!.role !== "user") messages.shift();
+    let withPicture: Msg[] | null = null;
+    if (picture && messages.length) {
+      const last = messages[messages.length - 1]!;
+      withPicture = [
+        ...messages.slice(0, -1),
+        {
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: "image/png", data: picture } },
+            { type: "text", text: `This is the region of page ${region!.page + 1} I mean.\n\n${String(last.content)}` },
+          ],
+        },
+      ];
+    }
 
     const streamId = randomUUID();
-    this.stream(streamId, { system, messages }, (text) => {
-      if (!text.trim()) return undefined;
-      const r = db
-        .prepare("insert into chat_messages (chat_id, role, content, quote, block_id, created_at) values (?, 'assistant', ?, null, ?, ?)")
-        .run(threadId, text, anchor, Date.now());
-      db.prepare("update chats set updated_at = ? where id = ?").run(Date.now(), threadId);
-      return chatFromRow(db.prepare("select * from chat_messages where id = ?").get(Number(r.lastInsertRowid)) as Record<string, unknown>);
-    });
+    this.stream(
+      streamId,
+      { system, messages: withPicture ?? messages },
+      (text) => {
+        if (!text.trim()) return undefined;
+        const r = db
+          .prepare("insert into chat_messages (chat_id, role, content, quote, page, created_at) values (?, 'assistant', ?, null, ?, ?)")
+          .run(threadId, text, at?.page ?? null, Date.now());
+        db.prepare("update chats set updated_at = ? where id = ?").run(Date.now(), threadId);
+        return chatFromRow(db.prepare("select * from chat_messages where id = ?").get(Number(r.lastInsertRowid)) as Record<string, unknown>);
+      },
+      withPicture ? messages : undefined,
+    );
     return { threadId, streamId };
   }
 
@@ -326,7 +384,7 @@ export class Ai {
     return rows.map((r) => ({
       id: Number(r["id"]),
       bookId: String(r["book_id"]),
-      blockId: r["block_id"] === null ? null : Number(r["block_id"]),
+      page: r["page"] === null ? null : Number(r["page"]),
       title: String(r["title"]),
       createdAt: Number(r["created_at"]),
       updatedAt: Number(r["updated_at"]),
@@ -344,19 +402,19 @@ export class Ai {
 
   // ── rewrite ────────────────────────────────────────────────────────────
 
-  rewrite(input: { blockId: number; instruction?: string; threadId?: number | null }): { streamId: string } {
+  async rewrite(input: { bookId: string; passage: Passage; instruction?: string; threadId?: number | null }): Promise<{ streamId: string }> {
     const db = this.ctx.db;
-    const block = db.prepare("select id, book_id, unit_id, type, text, custom_text, ord from blocks where id = ?").get(input.blockId) as
-      | { id: number; book_id: string; unit_id: number; type: string; text: string; custom_text: string | null; ord: number }
-      | undefined;
-    if (!block) throw new Error("That passage no longer exists.");
-    const book = this.bookInfo(block.book_id);
-    const neighbors = db
-      .prepare(
-        `select coalesce(custom_text, text) as text from blocks where unit_id = ? and type in ('paragraph', 'list', 'heading')
-         and ord between ? and ? and id != ? order by ord`,
-      )
-      .all(block.unit_id, block.ord - 3, block.ord + 2, block.id) as Array<{ text: string }>;
+    const { passage } = input;
+    const book = this.bookInfo(input.bookId);
+    const unitId = unitAt(db, input.bookId, passage.page);
+    // The page around the passage, for its sense; the passage itself, as the book has it.
+    const pt = await this.pageText(input.bookId, passage.page);
+    const before = pt ? cleanText(pt.text.slice(Math.max(0, passage.start - 1500), passage.start)) : "";
+    const after = pt ? cleanText(pt.text.slice(passage.end, passage.end + 900)) : "";
+    const original = pt ? cleanText(pt.text.slice(passage.start, passage.end)) : passage.quote;
+    const mine = db
+      .prepare("select text from versions where book_id = ? and page = ? and start = ? and end = ?")
+      .get(input.bookId, passage.page, passage.start, passage.end) as { text: string } | undefined;
     let explanation = "";
     if (input.threadId) {
       const last = db
@@ -364,21 +422,22 @@ export class Ai {
         .get(input.threadId) as { content: string } | undefined;
       if (last) explanation = last.content;
     }
-    const reader = this.readerContext(block.book_id, block.unit_id);
+    const reader = unitId === null ? "" : this.readerContext(input.bookId, unitId);
     const system = `You rewrite passages of a textbook for one particular reader, so that when they come back to this part of “${book.title}” it reads the way they understand best.
 
 Rules:
 - Keep every fact, definition, and claim of the original. Do not add new material beyond what makes the original clearer.
-- Keep the book's notation. Write math in LaTeX between $…$.
+- Keep the book's notation. Write math in LaTeX between $…$. The original comes from the PDF's text layer, so its mathematics may be garbled; write what the book means.
 - Plain prose. You may use **bold** for a key term and *italics* for emphasis. No headings, no preamble, no commentary.
 - Roughly the original's length unless the reader asks otherwise.
 - Reply with the rewritten passage and nothing else.`;
     const content = [
       `<book>${book.title}${book.author ? ` — ${book.author}` : ""}</book>`,
-      `<chapter>${this.unitTitle(block.unit_id)}</chapter>`,
-      neighbors.length ? `<nearby_text>\n${neighbors.map((n) => n.text).join("\n\n")}\n</nearby_text>` : "",
-      `<passage>\n${block.custom_text ?? block.text}\n</passage>`,
-      block.custom_text ? `<original_passage>\n${block.text}\n</original_passage>` : "",
+      unitId === null ? "" : `<chapter>${this.unitTitle(unitId)}</chapter>`,
+      before ? `<text_before>\n${before}\n</text_before>` : "",
+      `<passage>\n${original}\n</passage>`,
+      after ? `<text_after>\n${after}\n</text_after>` : "",
+      mine ? `<their_current_version>\n${mine.text}\n</their_current_version>` : "",
       reader ? `<reader>\n${reader}\n</reader>` : "",
       explanation ? `<explanation_that_helped>\nThe reader asked about this passage and found this explanation helpful. Fold its insight into the rewrite:\n${explanation}\n</explanation_that_helped>` : "",
       `Rewrite the passage${input.instruction?.trim() ? `, and: ${input.instruction.trim()}` : "."}`,
@@ -392,13 +451,11 @@ Rules:
 
   // ── cards ──────────────────────────────────────────────────────────────
 
-  async suggestCard(input: { bookId: string; blockId: number; quote: string }): Promise<{ front: string; back: string; kind: CardKind }> {
-    const block = this.ctx.db.prepare("select coalesce(custom_text, text) as text, unit_id from blocks where id = ?").get(input.blockId) as
-      | { text: string; unit_id: number }
-      | undefined;
+  async suggestCard(input: { bookId: string; page: number | null; quote: string; context: string }): Promise<{ front: string; back: string; kind: CardKind }> {
+    const unitId = input.page === null ? null : unitAt(this.ctx.db, input.bookId, input.page);
     const reply = await this.complete(
       `You write one excellent spaced-repetition flashcard. Atomic: one idea. Precise wording; the answer should be unambiguous from the question. Prefer a question that tests understanding over one that tests wording. Use LaTeX in $…$ for math. Reply with JSON only: {"kind":"basic","front":"…","back":"…"} — or, when the passage is a definition or a key term best learned in context, {"kind":"cloze","front":"sentence with the key part as {{c1::hidden part}}","back":"optional extra context"}.`,
-      `Book: ${this.bookInfo(input.bookId).title}\nChapter: ${block ? this.unitTitle(block.unit_id) : ""}\n\nParagraph:\n${block?.text ?? ""}\n\nThe reader selected this to remember:\n"""${input.quote}"""`,
+      `Book: ${this.bookInfo(input.bookId).title}\nChapter: ${this.unitTitle(unitId)}\n\nParagraph:\n${input.context}\n\nThe reader selected this to remember:\n"""${input.quote}"""`,
       false,
     );
     const card = parseJson<{ kind?: string; front?: string; back?: string }>(reply);
@@ -410,7 +467,7 @@ Rules:
     return this.enqueue(bookId, `Writing cards for “${this.unitTitle(unitId)}”`, async () => {
       const db = this.ctx.db;
       const blocks = db
-        .prepare("select id, type, coalesce(custom_text, text) as text from blocks where unit_id = ? and type in ('paragraph', 'list', 'caption', 'heading', 'code', 'equation') order by ord")
+        .prepare("select id, type, text from blocks where unit_id = ? and type in ('paragraph', 'list', 'caption', 'heading', 'code', 'equation') order by ord")
         .all(unitId) as Array<{ id: number; type: string; text: string }>;
       const text = this.unitText(blocks, 26000);
       if (text.length < 400) return;
@@ -461,7 +518,7 @@ Reply with JSON only:
     return this.enqueue(bookId, `Mapping concepts in “${this.unitTitle(unitId)}”`, async () => {
       const db = this.ctx.db;
       const blocks = db
-        .prepare("select id, type, coalesce(custom_text, text) as text from blocks where unit_id = ? and type in ('paragraph', 'list', 'caption', 'heading') order by ord")
+        .prepare("select id, type, text from blocks where unit_id = ? and type in ('paragraph', 'list', 'caption', 'heading') order by ord")
         .all(unitId) as Array<{ id: number; type: string; text: string }>;
       const text = this.unitText(blocks, 26000);
       if (text.length < 400) return;
@@ -502,7 +559,7 @@ Reply with JSON only:
         for (const [key, id] of ids) matcher.add(key, id);
         const all = db
           .prepare(
-            `select b.id, b.unit_id, coalesce(b.custom_text, b.text) as text from blocks b join sections u on u.id = b.unit_id
+            `select b.id, b.unit_id, b.text from blocks b join sections u on u.id = b.unit_id
              where b.book_id = ? and u.kind in ('body', 'exercises') and b.type in ('paragraph', 'list', 'caption', 'heading', 'footnote')`,
           )
           .all(bookId) as Array<{ id: number; unit_id: number; text: string }>;

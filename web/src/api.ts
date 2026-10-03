@@ -50,10 +50,6 @@ export function on<E extends keyof Events>(event: E, listener: Listener<E>): () 
 export const platform = bridge.platform;
 export const pathForFile = (file: File) => bridge.pathForFile(file);
 
-export function assetUrl(bookId: string, asset: string): string {
-  return `apprentice://book/${bookId}/assets/${asset}`;
-}
-
 export function pageUrl(bookId: string, page: number, width: number): string {
   return `apprentice://book/${bookId}/page/${page}?w=${Math.round(width / 100) * 100}`;
 }

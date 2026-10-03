@@ -270,8 +270,11 @@ export function Review({ bookId }: { bookId: string | null }) {
             <button className="btn small ghost" onClick={() => setEditing(true)} title="Edit  E">
               <Pencil size={13} /> Edit
             </button>
-            {card.blockId && (
-              <button className="btn small ghost" onClick={() => go({ name: "reader", bookId: card.bookId, blockId: card.blockId! })}>
+            {(card.blockId || card.page !== null) && (
+              <button
+                className="btn small ghost"
+                onClick={() => go({ name: "reader", bookId: card.bookId, ...(card.blockId ? { blockId: card.blockId } : { page: card.page! }) })}
+              >
                 <GraduationCap size={13} /> See it in the book
               </button>
             )}

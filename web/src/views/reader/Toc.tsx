@@ -2,28 +2,19 @@
  * The contents: chapters (units) with how much of each is read, and the
  * sections inside the open one. Contents pages, indexes and bibliographies
  * stay in the list but recede — they are part of the book, not the reading.
- *
- * The section on screen changes many times a second while scrolling, so
- * each row subscribes to whether *it* is the one; a change re-renders two
- * rows, not the tree.
+ * Every row goes to its page; the section the open page is in is marked.
  */
 import { ChevronRight } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Section } from "../../../../shared/types";
 import { Ring } from "../../components/ui";
-import { useReader } from "./state";
+import { lastVisible, unitAtPage, useReader } from "./state";
 
 const QUIET = new Set(["contents", "index", "bibliography", "front"]);
 
-const SectionRow = memo(function SectionRow({ section, unitId, indent }: { section: Section; unitId: number; indent: number }) {
-  const active = useReader((s) => s.activeSection === section.id);
+const SectionRow = memo(function SectionRow({ section, active, indent }: { section: Section; active: boolean; indent: number }) {
   return (
-    <div
-      className={`toc-sec ${active ? "active" : ""}`}
-      style={{ paddingLeft: indent }}
-      onClick={() => section.blockId && void useReader.getState().loadUnit(unitId, { blockId: section.blockId, flash: false })}
-      title={section.title}
-    >
+    <div className={`toc-sec ${active ? "active" : ""}`} style={{ paddingLeft: indent }} onClick={() => useReader.getState().goTo(section.page)} title={section.title}>
       {section.title}
     </div>
   );
@@ -33,6 +24,7 @@ const UnitRow = memo(function UnitRow({
   unit,
   subs,
   current,
+  active,
   expanded,
   indent,
   onToggle,
@@ -40,6 +32,8 @@ const UnitRow = memo(function UnitRow({
   unit: Section;
   subs: Section[];
   current: boolean;
+  /** The section the open page is in, when it is one of this unit's. */
+  active: number | null;
   expanded: boolean;
   indent: number;
   onToggle(id: number): void;
@@ -50,7 +44,7 @@ const UnitRow = memo(function UnitRow({
       <div
         className={`toc-unit ${current ? "current" : ""}`}
         style={{ paddingLeft: indent }}
-        onClick={() => void useReader.getState().loadUnit(unit.id)}
+        onClick={() => useReader.getState().goTo(unit.page)}
         title={unit.title}
       >
         {subs.length > 0 ? (
@@ -73,7 +67,7 @@ const UnitRow = memo(function UnitRow({
       {expanded && (
         <div className="toc-subs">
           {subs.map((s) => (
-            <SectionRow key={s.id} section={s} unitId={unit.id} indent={36 + Math.max(0, s.level - unit.level - 1) * 12} />
+            <SectionRow key={s.id} section={s} active={s.id === active} indent={36 + Math.max(0, s.level - unit.level - 1) * 12} />
           ))}
         </div>
       )}
@@ -83,11 +77,12 @@ const UnitRow = memo(function UnitRow({
 
 export const Toc = memo(function Toc() {
   const sections = useReader((s) => s.sections);
-  const unitId = useReader((s) => s.unitId);
+  const page = useReader(lastVisible);
   const [open, setOpen] = useState<Set<number>>(new Set());
   const listRef = useRef<HTMLDivElement>(null);
 
   const units = useMemo(() => sections.filter((s) => s.isUnit), [sections]);
+  const unitId = useMemo(() => unitAtPage(units, page)?.id ?? null, [units, page]);
   const inside = useMemo(() => {
     const m = new Map<number, Section[]>();
     for (const s of sections) {
@@ -98,6 +93,12 @@ export const Toc = memo(function Toc() {
     }
     return m;
   }, [sections]);
+  // The deepest section that starts at or before the open page.
+  const active = useMemo(() => {
+    let best: Section | null = null;
+    for (const s of inside.get(unitId ?? -1) ?? []) if (s.page <= page && (!best || s.page >= best.page)) best = s;
+    return best?.id ?? null;
+  }, [inside, unitId, page]);
   // Parts above their chapters: a unit's depth in the outline, for indent.
   const minLevel = useMemo(() => Math.min(...units.map((u) => u.level)), [units]);
   const none = useMemo<Section[]>(() => [], []);
@@ -129,6 +130,7 @@ export const Toc = memo(function Toc() {
             unit={u}
             subs={subs}
             current={u.id === unitId}
+            active={u.id === unitId ? active : null}
             expanded={open.has(u.id) && subs.length > 0}
             indent={10 + (u.level - minLevel) * 12}
             onToggle={toggle}

@@ -1,50 +1,51 @@
 /**
- * Reading a book: contents on the left, the chapter in the middle, the
- * study tools — ask, notes, cards, concepts, sketch — on the right.
+ * Reading a book: contents on the left, the book in the middle, the study
+ * tools — ask, notes, cards, concepts, sketch — on the right.
  */
-import { ChevronLeft, ChevronRight, FileText, PanelLeft, PanelRight, Search, Type } from "lucide-react";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { useApp } from "../../store";
+import { BookOpen, ChevronLeft, ChevronRight, PanelLeft, PanelRight, Search, SquareDashedMousePointer } from "lucide-react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Popover } from "../../components/ui";
 import { percent } from "../../lib/format";
+import { useApp } from "../../store";
+import { Book } from "./Book";
 import { CardComposer } from "./CardComposer";
-import { PageView } from "./PageView";
 import { SearchBox } from "./SearchBox";
-import { useReader } from "./state";
+import { lastVisible, unitAtPage, useReader } from "./state";
 import { Toc } from "./Toc";
-import { Typography } from "./Typography";
-import { UnitView } from "./UnitView";
+import { ViewMenu } from "./ViewMenu";
 import "../../styles/reader.css";
 import "../../styles/panel.css";
 
 const Panel = lazy(() => import("../panel/Panel").then((m) => ({ default: m.Panel })));
 
-export function Reader({ bookId, unitId, blockId }: { bookId: string; unitId?: number | undefined; blockId?: number | undefined }) {
+export function Reader({ bookId, page, blockId, terms }: { bookId: string; page?: number | undefined; blockId?: number | undefined; terms?: string[] | undefined }) {
   const book = useReader((s) => s.book);
   const units = useReader((s) => s.units);
-  const current = useReader((s) => s.unitId);
+  const current = useReader(lastVisible);
   const loading = useReader((s) => s.loading);
+  const ready = useReader((s) => s.sizes.length > 0);
   const error = useReader((s) => s.error);
   const tocOpen = useReader((s) => s.tocOpen);
   const panel = useReader((s) => s.panel);
-  const pageView = useReader((s) => s.pageView);
+  const boxMode = useReader((s) => s.boxMode);
   const cardDraft = useReader((s) => s.cardDraft);
   const go = useApp((s) => s.go);
   // Progress changes as the book is read; the library store has it live.
   const readFraction = useApp((s) => s.books.find((b) => b.id === bookId)?.readFraction ?? book?.readFraction ?? 0);
-  const scroller = useRef<HTMLDivElement>(null);
-  const [typo, setTypo] = useState<DOMRect | null>(null);
+  const [view, setView] = useState<DOMRect | null>(null);
   const [search, setSearch] = useState(false);
 
   useEffect(() => {
-    void useReader.getState().open(bookId, unitId, blockId);
+    void useReader.getState().open(bookId, { page, blockId, terms });
   }, [bookId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // A jump to a block from elsewhere (search, a concept) while the book is open.
+  // A jump from elsewhere (search, a concept, a card) while the book is open.
   useEffect(() => {
-    if (blockId && useReader.getState().book) void useReader.getState().goToBlock(blockId);
-    else if (unitId && useReader.getState().book) void useReader.getState().loadUnit(unitId);
-  }, [unitId, blockId]);
+    const r = useReader.getState();
+    if (!r.book) return;
+    if (blockId) void r.goToBlock(blockId, terms);
+    else if (page !== undefined) r.goTo(page, terms ? { terms } : undefined);
+  }, [page, blockId, terms]);
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -70,17 +71,16 @@ export function Reader({ bookId, unitId, blockId }: { bookId: string; unitId?: n
       } else if (e.key === "/") {
         e.preventDefault();
         setSearch(true);
-      } else if (e.key === "Escape") {
-        if (r.pageView) r.set({ pageView: false });
-        else if (r.editing) r.set({ editing: null });
+      } else if (e.key === "b") {
+        r.set({ boxMode: !r.boxMode });
       }
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, []);
 
-  const unit = units.find((u) => u.id === current);
-  const index = units.findIndex((u) => u.id === current);
+  const unit = unitAtPage(units, current);
+  const sorted = [...units].sort((a, b) => a.page - b.page);
   const r = useReader.getState();
 
   return (
@@ -108,11 +108,21 @@ export function Reader({ bookId, unitId, blockId }: { bookId: string; unitId?: n
           </div>
         </div>
         <div className="topbar-right">
-          {book && <span className="topbar-progress muted" title="Read of the whole book">{percent(readFraction)}</span>}
-          <button className="icon-btn" disabled={index <= 0} onClick={() => r.nextUnit(-1)} title="Previous chapter  [" aria-label="Previous chapter">
+          {book && (
+            <span className="topbar-progress muted" title="Read of the whole book">
+              {percent(readFraction)}
+            </span>
+          )}
+          <button className="icon-btn" disabled={!unit || sorted[0]?.page === unit.page} onClick={() => r.nextUnit(-1)} title="Previous chapter  [" aria-label="Previous chapter">
             <ChevronLeft size={17} />
           </button>
-          <button className="icon-btn" disabled={index < 0 || index >= units.length - 1} onClick={() => r.nextUnit(1)} title="Next chapter  ]" aria-label="Next chapter">
+          <button
+            className="icon-btn"
+            disabled={!unit || sorted[sorted.length - 1]?.page === unit.page}
+            onClick={() => r.nextUnit(1)}
+            title="Next chapter  ]"
+            aria-label="Next chapter"
+          >
             <ChevronRight size={17} />
           </button>
           <span className="topbar-sep" />
@@ -120,15 +130,20 @@ export function Reader({ bookId, unitId, blockId }: { bookId: string; unitId?: n
             <Search size={17} />
           </button>
           <button
-            className={`icon-btn ${typo ? "on" : ""}`}
-            onClick={(e) => setTypo((e.currentTarget as HTMLElement).getBoundingClientRect())}
-            title="Text and theme"
-            aria-label="Text and theme"
+            className={`icon-btn ${boxMode ? "on" : ""}`}
+            onClick={() => r.set({ boxMode: !boxMode })}
+            title="Box a figure or equation to ask about it  B  (or Alt-drag)"
+            aria-label="Box a region"
           >
-            <Type size={17} />
+            <SquareDashedMousePointer size={17} />
           </button>
-          <button className={`icon-btn ${pageView ? "on" : ""}`} onClick={() => r.set({ pageView: !pageView, pageTarget: null })} title="Original pages" aria-label="Original pages">
-            <FileText size={17} />
+          <button
+            className={`icon-btn ${view ? "on" : ""}`}
+            onClick={(e) => setView((e.currentTarget as HTMLElement).getBoundingClientRect())}
+            title="Pages and theme"
+            aria-label="Pages and theme"
+          >
+            <BookOpen size={17} />
           </button>
           <button className={`icon-btn ${panel ? "on" : ""}`} onClick={() => r.setPanel(panel ? null : "ask")} title="Study panel  Ctrl+J" aria-label="Study panel">
             <PanelRight size={17} />
@@ -144,15 +159,10 @@ export function Reader({ bookId, unitId, blockId }: { bookId: string; unitId?: n
             <h3>Couldn't open this book</h3>
             <p>{error}</p>
           </div>
-        ) : pageView ? (
-          <PageView />
-        ) : (
-          <div className="scroller" ref={scroller}>
-            {loading && !useReader.getState().content && <ColumnSkeleton />}
-            <UnitView scroller={scroller} />
-          </div>
-        )}
-        {loading && useReader.getState().content && <div className="loading-bar" />}
+        ) : ready ? (
+          <Book />
+        ) : null}
+        {loading && <div className="loading-bar" />}
       </section>
 
       <aside className="side-pane">
@@ -163,24 +173,13 @@ export function Reader({ bookId, unitId, blockId }: { bookId: string; unitId?: n
         )}
       </aside>
 
-      {typo && (
-        <Popover anchor={{ x: typo.left + typo.width / 2, y: typo.top, h: typo.height }} placement="below" onClose={() => setTypo(null)}>
-          <Typography />
+      {view && (
+        <Popover anchor={{ x: view.left + view.width / 2, y: view.top, h: view.height }} placement="below" onClose={() => setView(null)}>
+          <ViewMenu />
         </Popover>
       )}
       {search && <SearchBox onClose={() => setSearch(false)} />}
       {cardDraft && <CardComposer draft={cardDraft} onClose={() => r.set({ cardDraft: null })} />}
-    </div>
-  );
-}
-
-function ColumnSkeleton() {
-  return (
-    <div className="column skeleton" aria-hidden>
-      <div className="sk-line w40 tall" />
-      {Array.from({ length: 9 }, (_, i) => (
-        <div key={i} className={`sk-line ${i % 3 === 2 ? "w70" : "w100"}`} />
-      ))}
     </div>
   );
 }

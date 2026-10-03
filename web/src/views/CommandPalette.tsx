@@ -9,7 +9,7 @@ import type { SearchHit } from "../../../shared/types";
 import { api } from "../api";
 import { useApp } from "../store";
 import { useReader } from "./reader/state";
-import { Snippet } from "./reader/SearchBox";
+import { searchTerms, Snippet } from "./reader/SearchBox";
 
 interface Item {
   id: string;
@@ -70,7 +70,7 @@ export function CommandPalette({ onClose }: { onClose(): void }) {
           group: "Chapters",
           label: u.title,
           icon: <FileText size={16} />,
-          run: close(() => void useReader.getState().loadUnit(u.id)),
+          run: close(() => useReader.getState().goTo(u.page)),
         });
     }
     for (const b of books)
@@ -115,7 +115,7 @@ export function CommandPalette({ onClose }: { onClose(): void }) {
       icon: <Search size={16} />,
       run: () => {
         onClose();
-        go({ name: "reader", bookId: h.bookId, unitId: h.unitId, blockId: h.blockId });
+        go({ name: "reader", bookId: h.bookId, blockId: h.blockId, terms: searchTerms(q) });
       },
     })),
   ];

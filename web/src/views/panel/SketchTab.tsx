@@ -1,7 +1,7 @@
 /**
  * The drawing tab: a pad for working something out by hand beside the
- * text, saved as you draw. A sketch can be pinned to a passage, which then
- * shows it in the margin of the chapter.
+ * text, saved as you draw. A sketch can be pinned to a place on a page,
+ * which then shows it in that page's margin.
  */
 import { ChevronLeft, PenLine, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -11,14 +11,12 @@ import { ago } from "../../lib/format";
 import { useApp } from "../../store";
 import { SketchPad } from "../sketch/SketchPad";
 import { sketchToSvg } from "../sketch/render";
-import { displayText, useReader } from "../reader/state";
+import { useReader } from "../reader/state";
 
 const EMPTY: SketchData = { version: 1, strokes: [] };
 
 export function SketchTab() {
   const bookId = useReader((s) => s.bookId)!;
-  const unitId = useReader((s) => s.unitId);
-  const content = useReader((s) => s.content);
   const request = useReader((s) => s.sketchRequest);
   const toast = useApp((s) => s.toast);
   const [list, setList] = useState<Sketch[] | null>(null);
@@ -34,15 +32,16 @@ export function SketchTab() {
   useEffect(load, [load]);
 
   const start = useCallback(
-    async (blockId: number | null) => {
-      const block = content?.blocks.find((b) => b.id === blockId);
-      const t = block ? displayText(block).slice(0, 60) : `Sketch ${new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+    async (anchor: { page: number; y: number } | null) => {
+      const day = new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      const t = anchor ? `Page ${anchor.page + 1} · ${day}` : `Sketch ${day}`;
       try {
-        const s = await api.sketches.save({ bookId, blockId, unitId, title: t, data: EMPTY, svg: sketchToSvg(EMPTY) });
-        // The margin marks the passage it was pinned to.
-        const c = useReader.getState().content;
-        if (c && s.unitId === c.unitId)
-          useReader.getState().set({ content: { ...c, sketches: [{ id: s.id, blockId: s.blockId, title: s.title, svg: s.svg, updatedAt: s.updatedAt }, ...c.sketches] } });
+        const s = await api.sketches.save({ bookId, page: anchor?.page ?? null, y: anchor?.y ?? null, title: t, data: EMPTY, svg: sketchToSvg(EMPTY) });
+        // The margin of its page marks it.
+        if (s.page !== null) {
+          const r = useReader.getState();
+          r.set({ pins: [...r.pins, { id: s.id, page: s.page, y: s.y ?? 60, title: s.title }] });
+        }
         setOpen(s);
         setTitle(s.title);
         load();
@@ -50,14 +49,14 @@ export function SketchTab() {
         toast(errorText(e), "error");
       }
     },
-    [bookId, content, load, toast, unitId],
+    [bookId, load, toast],
   );
 
   useEffect(() => {
     if (!request || request.seq === handled.current) return;
     handled.current = request.seq;
     if (request.sketchId) void api.sketches.get(request.sketchId).then((s) => (setOpen(s), setTitle(s.title)));
-    else void start(request.blockId);
+    else void start(request.anchor);
   }, [request, start]);
 
   const save = useCallback(
@@ -66,7 +65,7 @@ export function SketchTab() {
       if (!s) return;
       const svg = sketchToSvg(data);
       void api.sketches
-        .save({ id: s.id, bookId, blockId: s.blockId, unitId: s.unitId, title: title || s.title, data, svg })
+        .save({ id: s.id, bookId, page: s.page, y: s.y, title: title || s.title, data, svg })
         .then((saved) => {
           if (current.current?.id === saved.id) current.current = saved;
           // Thumbnails follow the drawing.
@@ -78,7 +77,6 @@ export function SketchTab() {
   );
 
   if (open) {
-    const anchor = content?.blocks.find((b) => b.id === open.blockId);
     return (
       <div className="sketch-tab">
         <div className="sketch-bar">
@@ -89,14 +87,14 @@ export function SketchTab() {
             className="sketch-title"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            onBlur={() => void api.sketches.save({ id: open.id, bookId, blockId: open.blockId, unitId: open.unitId, title, data: current.current?.data ?? open.data, svg: current.current?.svg ?? open.svg })}
+            onBlur={() => void api.sketches.save({ id: open.id, bookId, page: open.page, y: open.y, title, data: current.current?.data ?? open.data, svg: current.current?.svg ?? open.svg })}
           />
           <button
             className="icon-btn small"
             onClick={async () => {
               await api.sketches.remove(open.id);
-              const c = useReader.getState().content;
-              if (c) useReader.getState().set({ content: { ...c, sketches: c.sketches.filter((x) => x.id !== open.id) } });
+              const r = useReader.getState();
+              r.set({ pins: r.pins.filter((x) => x.id !== open.id) });
               setOpen(null);
               load();
             }}
@@ -105,9 +103,9 @@ export function SketchTab() {
             <Trash2 size={14} />
           </button>
         </div>
-        {anchor && (
-          <button className="sketch-anchor" onClick={() => void useReader.getState().goToBlock(anchor.id)}>
-            Beside: <span>{displayText(anchor).slice(0, 90)}</span>
+        {open.page !== null && (
+          <button className="sketch-anchor" onClick={() => useReader.getState().goTo(open.page!)}>
+            Pinned to <span>page {open.page + 1}</span>
           </button>
         )}
         <div className="sketch-area">
@@ -129,7 +127,7 @@ export function SketchTab() {
         <div className="empty">
           <PenLine size={24} />
           <h3>Draw it out</h3>
-          <p>Diagrams, derivations, mind maps — sketch beside the text. Use a passage's ⋯ menu to pin a sketch to it.</p>
+          <p>Diagrams, derivations, mind maps — sketch beside the text. Select a passage and choose ⋯ → Sketch beside it to pin one to its page.</p>
         </div>
       )}
       <div className="sketch-grid">

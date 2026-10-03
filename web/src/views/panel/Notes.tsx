@@ -13,17 +13,17 @@ import { useReader } from "../reader/state";
 export function Notes() {
   const bookId = useReader((s) => s.bookId)!;
   const book = useReader((s) => s.book);
-  const content = useReader((s) => s.content);
+  const highlights = useReader((s) => s.highlights);
   const toast = useApp((s) => s.toast);
   const [rows, setRows] = useState<HighlightRow[] | null>(null);
   const [color, setColor] = useState<HighlightColor | null>(null);
   const [q, setQ] = useState("");
   const [onlyNotes, setOnlyNotes] = useState(false);
 
-  // The open chapter's highlights change under us; reload when they do.
+  // Highlights change under us as the reader marks the pages; reload when they do.
   useEffect(() => {
     void api.highlights.list(bookId).then(setRows);
-  }, [bookId, content?.highlights]);
+  }, [bookId, highlights]);
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -39,8 +39,9 @@ export function Notes() {
     const g: Array<{ unit: string; rows: HighlightRow[] }> = [];
     for (const r of shown) {
       const last = g[g.length - 1];
-      if (last && last.unit === r.unitTitle) last.rows.push(r);
-      else g.push({ unit: r.unitTitle, rows: [r] });
+      const unit = r.unitTitle || "Notes";
+      if (last && last.unit === unit) last.rows.push(r);
+      else g.push({ unit, rows: [r] });
     }
     return g;
   }, [shown]);
@@ -93,8 +94,9 @@ export function Notes() {
           <section key={g.unit + g.rows[0]!.id}>
             <div className="notes-unit label">{g.unit}</div>
             {g.rows.map((r) => (
-              <article key={r.id} className={`note-card nc-${r.color}`} onClick={() => void useReader.getState().goToBlock(r.blockId)}>
+              <article key={r.id} className={`note-card nc-${r.color}`} onClick={() => useReader.getState().goTo(r.page, { range: [r.start, r.end] })}>
                 <p className="note-quote">{r.quote}</p>
+                <span className="note-page muted">p. {r.page + 1}</span>
                 {r.note.trim() && <p className="note-text">{r.note}</p>}
               </article>
             ))}

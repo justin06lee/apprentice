@@ -4,6 +4,7 @@
  */
 import * as path from "node:path";
 import type { Events } from "../shared/api.js";
+import type { PageText, Rect, Trim } from "../shared/pages.js";
 import { DEFAULT_SETTINGS, type Settings } from "../shared/types.js";
 import type { Db } from "./db.js";
 
@@ -13,6 +14,15 @@ export interface Ctx {
   dbPath: string;
   emit<E extends keyof Events>(event: E, payload: Events[E]): void;
   settings(): Settings;
+  /** A book's pages, as the page renderer reads them. */
+  pages: {
+    text(bookId: string, page: number): Promise<PageText>;
+    sizes(bookId: string): Promise<Array<[number, number]>>;
+    /** Where the book's pages are printed, for trimming their margins. */
+    trim(bookId: string): Promise<Trim | null>;
+    /** A rectangle of a page as a PNG about `width` pixels wide. */
+    region(bookId: string, page: number, rect: Rect, width: number): Promise<Uint8Array>;
+  };
 }
 
 export function bookDir(ctx: Pick<Ctx, "dataDir">, bookId: string): string {

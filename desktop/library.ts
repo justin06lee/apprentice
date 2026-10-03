@@ -10,24 +10,22 @@ import { createHash, randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Worker } from "node:worker_threads";
-import type { HighlightRow } from "../shared/api.js";
+import type { HighlightRow, ReadResult } from "../shared/api.js";
+import { locate, rangeBox, type PageText, type Rect } from "../shared/pages.js";
 import type {
-  Block,
-  BlockType,
+  Annotations,
   Book,
   Highlight,
   HighlightColor,
-  Mark,
   OpenedBook,
   ReadingPosition,
   SearchHit,
   Section,
   SectionKind,
-  UnitContent,
+  Version,
 } from "../shared/types.js";
-import { plainText } from "../shared/inline.js";
 import { bookDir, today, type Ctx } from "./context.js";
-import { tx } from "./db.js";
+import { tx, type Db } from "./db.js";
 import type { IngestJob, IngestMessage } from "./ingest/worker.js";
 
 /** Read this much of a chapter and it counts as read: its cards unlock, its AI jobs run. */
@@ -47,7 +45,6 @@ interface BookRow {
   opened_at: number | null;
   has_cover: number;
   weight: number;
-  body_size: number;
   position: string | null;
   read_weight: number;
   due: number;
@@ -57,64 +54,48 @@ interface BookRow {
   time_ms: number;
 }
 
-interface BlockRow {
-  id: number;
-  unit_id: number;
-  section_id: number;
-  ord: number;
-  type: string;
-  level: number;
-  text: string;
-  marks: string | null;
-  refs: string | null;
-  page: number;
-  asset: string | null;
-  width: number;
-  height: number;
-  boxed: number;
-  label: string | null;
-  custom_text: string | null;
-  custom_source: string | null;
-  custom_at: number | null;
-}
-
-export function blockFromRow(r: BlockRow): Block {
-  const marks: Mark[] = r.marks ? JSON.parse(r.marks) : [];
-  const refs: Mark[] = r.refs ? JSON.parse(r.refs) : [];
-  return {
-    id: Number(r.id),
-    unitId: Number(r.unit_id),
-    sectionId: Number(r.section_id),
-    ord: Number(r.ord),
-    type: r.type as BlockType,
-    level: Number(r.level),
-    text: r.text,
-    marks: refs.length ? [...marks, ...refs] : marks,
-    page: Number(r.page),
-    asset: r.asset,
-    width: r.width,
-    height: r.height,
-    boxed: Number(r.boxed),
-    label: r.label,
-    custom: r.custom_text === null ? null : { text: r.custom_text, source: (r.custom_source ?? "user") as "user" | "ai", at: Number(r.custom_at ?? 0) },
-  };
-}
-
 export function highlightFromRow(r: Record<string, unknown>): Highlight {
   return {
     id: Number(r["id"]),
     bookId: String(r["book_id"]),
-    blockId: Number(r["block_id"]),
-    unitId: Number(r["unit_id"]),
+    page: Number(r["page"]),
     start: Number(r["start"]),
     end: Number(r["end"]),
     quote: String(r["quote"]),
-    onCustom: Number(r["on_custom"]) === 1,
+    blockId: r["block_id"] === null || Number(r["block_id"]) <= 0 ? null : Number(r["block_id"]),
+    unitId: r["unit_id"] === null || Number(r["unit_id"]) <= 0 ? null : Number(r["unit_id"]),
     color: String(r["color"]) as HighlightColor,
     note: String(r["note"] ?? ""),
     createdAt: Number(r["created_at"]),
     updatedAt: Number(r["updated_at"]),
   };
+}
+
+function versionFromRow(r: Record<string, unknown>): Version {
+  return {
+    id: Number(r["id"]),
+    bookId: String(r["book_id"]),
+    page: Number(r["page"]),
+    start: Number(r["start"]),
+    end: Number(r["end"]),
+    quote: String(r["quote"]),
+    text: String(r["text"]),
+    source: String(r["source"]) === "ai" ? "ai" : "user",
+    createdAt: Number(r["created_at"]),
+    updatedAt: Number(r["updated_at"]),
+  };
+}
+
+/** The chapter a page belongs to: the one most of its blocks are in, or the last to start before it. */
+export function unitAt(db: Db, bookId: string, page: number): number | null {
+  const byBlocks = db
+    .prepare("select unit_id from blocks where book_id = ? and page = ? group by unit_id order by sum(weight) desc limit 1")
+    .get(bookId, page) as { unit_id: number } | undefined;
+  if (byBlocks) return Number(byBlocks.unit_id);
+  const before = db
+    .prepare("select id from sections where book_id = ? and is_unit = 1 and page <= ? order by page desc, ord desc limit 1")
+    .get(bookId, page) as { id: number } | undefined;
+  return before ? Number(before.id) : null;
 }
 
 const BOOK_SELECT = `
@@ -166,7 +147,6 @@ export class Library {
       conceptCount: Number(r.concepts),
       unitCount: Number(r.units),
       timeMs: Number(r.time_ms),
-      bodySize: Number(r.body_size) || 10,
     };
   }
 
@@ -288,6 +268,7 @@ export class Library {
 
   private clearContent(bookId: string): void {
     tx(this.ctx.db, () => {
+      // Highlights, versions and page reads stay: they belong to pages, and the pages have not changed.
       for (const table of ["blocks", "sections", "mentions", "edges", "concept_books", "cards", "reads"])
         this.ctx.db.prepare(`delete from ${table} where book_id = ?`).run(bookId);
     });
@@ -350,58 +331,154 @@ export class Library {
     });
   }
 
-  open(bookId: string): OpenedBook {
+  async open(bookId: string): Promise<OpenedBook> {
     this.ctx.db.prepare("update books set opened_at = ? where id = ?").run(Date.now(), bookId);
     const book = this.book(bookId);
+    if (book.status !== "ready") throw new Error("This book is still being imported.");
     const raw = (this.ctx.db.prepare("select position from books where id = ?").get(bookId) as { position: string | null }).position;
     let position: ReadingPosition | null = null;
     try {
-      position = raw ? (JSON.parse(raw) as ReadingPosition) : null;
+      const p = raw ? (JSON.parse(raw) as { page?: number; unitId?: number; blockId?: number | null }) : null;
+      if (typeof p?.page === "number") position = { page: p.page };
+      else if (p?.blockId) position = this.pageOfBlock(p.blockId);
+      else if (p?.unitId) {
+        // Saved by the reflowed reader: the chapter it was in.
+        const u = this.ctx.db.prepare("select page from sections where id = ?").get(p.unitId) as { page: number } | undefined;
+        position = u ? { page: Number(u.page) } : null;
+      }
     } catch {
       position = null;
     }
-    return { book, sections: this.sections(bookId), position };
+    // Figures cut out for the reflowed reader, from before the book was read on its pages.
+    void fs.promises.rm(path.join(bookDir(this.ctx, bookId), "assets"), { recursive: true, force: true });
+    const [sizes, trim] = await Promise.all([this.ctx.pages.sizes(bookId), this.ctx.pages.trim(bookId).catch(() => null)]);
+    return { book, sections: this.sections(bookId), position, sizes, trim };
   }
 
-  unit(bookId: string, unitId: number): UnitContent {
-    const db = this.ctx.db;
-    const blocks = (db.prepare("select * from blocks where unit_id = ? order by ord").all(unitId) as unknown as BlockRow[]).map(blockFromRow);
-    const highlights = (db.prepare("select * from highlights where unit_id = ? order by start").all(unitId) as Array<Record<string, unknown>>).map(
-      highlightFromRow,
-    );
-    const read = (db.prepare("select block_id from reads where unit_id = ?").all(unitId) as Array<{ block_id: number }>).map((r) =>
-      Number(r.block_id),
-    );
-    const sketches = (
-      db
-        .prepare("select id, block_id, title, svg, updated_at from sketches where book_id = ? and unit_id = ? order by updated_at desc")
-        .all(bookId, unitId) as Array<Record<string, unknown>>
-    ).map((r) => ({
-      id: Number(r["id"]),
-      blockId: r["block_id"] === null ? null : Number(r["block_id"]),
-      title: String(r["title"]),
-      svg: String(r["svg"]),
-      updatedAt: Number(r["updated_at"]),
-    }));
-    const cards = db
-      .prepare("select sum(status = 'pending') as pending, sum(status = 'active') as active from cards where unit_id = ?")
-      .get(unitId) as { pending: number | null; active: number | null };
-    const chats = (
-      db.prepare("select distinct block_id from chats where book_id = ? and block_id is not null").all(bookId) as Array<{ block_id: number }>
-    ).map((r) => Number(r.block_id));
-    return {
-      unitId,
-      blocks,
-      highlights,
-      read,
-      sketches,
-      cards: { pending: Number(cards.pending ?? 0), active: Number(cards.active ?? 0) },
-      chats,
-    };
+  private pageOfBlock(blockId: number): ReadingPosition | null {
+    const b = this.ctx.db.prepare("select page from blocks where id = ?").get(blockId) as { page: number } | undefined;
+    return b ? { page: Number(b.page) } : null;
   }
 
   savePosition(bookId: string, position: ReadingPosition): void {
-    this.ctx.db.prepare("update books set position = ? where id = ?").run(JSON.stringify(position), bookId);
+    this.ctx.db.prepare("update books set position = ? where id = ?").run(JSON.stringify({ page: position.page }), bookId);
+  }
+
+  /**
+   * The block a stretch of a page falls in — the one whose box holds most of
+   * it — which is how a highlight or a card knows its chapter. Falls back to
+   * the chapter the page belongs to when the import found no block there.
+   */
+  async anchor(bookId: string, page: number, start: number, end: number): Promise<{ blockId: number | null; unitId: number | null }> {
+    const db = this.ctx.db;
+    const blocks = db.prepare("select id, unit_id, bbox from blocks where book_id = ? and page = ? and bbox is not null").all(bookId, page) as Array<{
+      id: number;
+      unit_id: number;
+      bbox: string;
+    }>;
+    if (blocks.length) {
+      let box: Rect | null = null;
+      try {
+        box = rangeBox(await this.ctx.pages.text(bookId, page), start, end);
+      } catch {
+        box = null;
+      }
+      if (box) {
+        const [x, y] = [(box[0] + box[2]) / 2, (box[1] + Math.min(box[3], box[1] + 14)) / 2];
+        let best: { id: number; unit_id: number } | null = null;
+        let bestD = Infinity;
+        for (const b of blocks) {
+          const r = JSON.parse(b.bbox) as Rect;
+          const dx = x < r[0] ? r[0] - x : x > r[2] ? x - r[2] : 0;
+          const dy = y < r[1] ? r[1] - y : y > r[3] ? y - r[3] : 0;
+          if (dx + dy < bestD) {
+            bestD = dx + dy;
+            best = b;
+          }
+        }
+        if (best) return { blockId: Number(best.id), unitId: Number(best.unit_id) };
+      }
+    }
+    return { blockId: blocks[0] ? Number(blocks[0].id) : null, unitId: unitAt(db, bookId, page) };
+  }
+
+  async annotations(bookId: string): Promise<Annotations> {
+    await this.placeLegacy(bookId);
+    const db = this.ctx.db;
+    const highlights = (
+      db.prepare("select * from highlights where book_id = ? and page is not null and start >= 0 order by page, start").all(bookId) as Array<
+        Record<string, unknown>
+      >
+    ).map(highlightFromRow);
+    const versions = (
+      db.prepare("select * from versions where book_id = ? and start >= 0 order by page, start").all(bookId) as Array<Record<string, unknown>>
+    ).map(versionFromRow);
+    const sketches = (
+      db.prepare("select id, page, y, title from sketches where book_id = ? and page is not null order by page").all(bookId) as Array<{
+        id: number;
+        page: number;
+        y: number | null;
+        title: string;
+      }>
+    ).map((r) => ({ id: Number(r.id), page: Number(r.page), y: Number(r.y ?? 60), title: r.title }));
+    const chats = (
+      db
+        .prepare(
+          `select c.id, c.page, (select m.start from chat_messages m where m.chat_id = c.id and m.page = c.page order by m.id limit 1) as start
+           from chats c where c.book_id = ? and c.page is not null`,
+        )
+        .all(bookId) as Array<{ id: number; page: number; start: number | null }>
+    ).map((r) => ({ id: Number(r.id), page: Number(r.page), start: r.start === null ? null : Number(r.start) }));
+    // Pages read on the page view, and pages whose every passage was read
+    // in the reflowed reader before it.
+    const read = (
+      db
+        .prepare(
+          `select page from page_reads where book_id = ?
+           union
+           select b.page from blocks b left join reads r on r.block_id = b.id where b.book_id = ?
+           group by b.page having count(*) = count(r.block_id)`,
+        )
+        .all(bookId, bookId) as Array<{ page: number }>
+    ).map((r) => Number(r.page));
+    return { highlights, versions, sketches, chats, read };
+  }
+
+  /**
+   * Marks made on the reflowed text carry a block's page and their words;
+   * find the words on the page (or the next, for a passage that ran over)
+   * and anchor them there. Words that cannot be found are left as they are.
+   */
+  private async placeLegacy(bookId: string): Promise<void> {
+    const db = this.ctx.db;
+    const waiting = [
+      ...(db.prepare("select id, page, quote, 'highlights' as tbl from highlights where book_id = ? and start < 0 and page is not null").all(bookId) as Array<{
+        id: number;
+        page: number;
+        quote: string;
+        tbl: string;
+      }>),
+      ...(db.prepare("select id, page, quote, 'versions' as tbl from versions where book_id = ? and start < 0").all(bookId) as Array<{
+        id: number;
+        page: number;
+        quote: string;
+        tbl: string;
+      }>),
+    ];
+    for (const w of waiting) {
+      for (const page of [Number(w.page), Number(w.page) + 1]) {
+        let text: PageText;
+        try {
+          text = await this.ctx.pages.text(bookId, page);
+        } catch {
+          continue;
+        }
+        const at = locate(text, w.quote);
+        if (!at) continue;
+        db.prepare(`update ${w.tbl === "versions" ? "versions" : "highlights"} set page = ?, start = ?, end = ? where id = ?`).run(page, at[0], at[1], w.id);
+        break;
+      }
+    }
   }
 
   private unitFraction(unitId: number): number {
@@ -416,43 +493,75 @@ export class Library {
     return Number(r.weight) ? Math.min(1, Number(r.read) / Number(r.weight)) : 1;
   }
 
-  /** Records reads, and when that finishes a chapter, unlocks what was waiting on it. */
-  markRead(bookId: string, unitId: number, reads: Array<{ blockId: number; dwellMs: number }>, unlock: (unitId: number) => number) {
-    const before = this.unitFraction(unitId);
+  /**
+   * Pages read. Reading a page reads every passage the import found on it,
+   * which is what chapter progress, the knowledge map and the cards that
+   * wait on a chapter are all counted in.
+   */
+  readPages(bookId: string, reads: Array<{ page: number; dwellMs: number }>, unlock: (unitId: number) => number): ReadResult {
+    const db = this.ctx.db;
+    const pages = reads.map((r) => r.page);
+    if (!pages.length) return { units: [], unlocked: 0 };
+    const marks = pages.map(() => "?").join(",");
+    const units = (
+      db.prepare(`select distinct unit_id from blocks where book_id = ? and page in (${marks})`).all(bookId, ...pages) as Array<{ unit_id: number }>
+    ).map((r) => Number(r.unit_id));
+    const before = new Map(units.map((u) => [u, this.unitFraction(u)]));
     const now = Date.now();
-    tx(this.ctx.db, () => {
-      const put = this.ctx.db.prepare(
-        `insert into reads (block_id, book_id, unit_id, at, dwell_ms) values (?, ?, ?, ?, ?)
-         on conflict(block_id) do update set dwell_ms = dwell_ms + excluded.dwell_ms`,
+    tx(db, () => {
+      const putPage = db.prepare(
+        `insert into page_reads (book_id, page, at, dwell_ms) values (?, ?, ?, ?)
+         on conflict(book_id, page) do update set dwell_ms = dwell_ms + excluded.dwell_ms`,
       );
-      for (const r of reads) put.run(r.blockId, bookId, unitId, now, Math.round(r.dwellMs));
+      const putBlocks = db.prepare(
+        `insert into reads (block_id, book_id, unit_id, at, dwell_ms) select id, book_id, unit_id, ?, 0 from blocks where book_id = ? and page = ?
+         on conflict(block_id) do nothing`,
+      );
+      for (const r of reads) {
+        putPage.run(bookId, r.page, now, Math.round(r.dwellMs));
+        putBlocks.run(now, bookId, r.page);
+      }
     });
-    return this.afterReading(bookId, unitId, before, unlock);
+    return this.afterReading(bookId, before, unlock);
   }
 
-  markUnit(bookId: string, unitId: number, read: boolean, unlock: (unitId: number) => number) {
-    const before = this.unitFraction(unitId);
-    if (read) {
-      this.ctx.db
-        .prepare(
+  markUnit(bookId: string, unitId: number, read: boolean, unlock: (unitId: number) => number): ReadResult {
+    const db = this.ctx.db;
+    const before = new Map([[unitId, this.unitFraction(unitId)]]);
+    tx(db, () => {
+      if (read) {
+        db.prepare(
           `insert into reads (block_id, book_id, unit_id, at, dwell_ms) select id, book_id, unit_id, ?, 0 from blocks where unit_id = ?
            on conflict(block_id) do nothing`,
-        )
-        .run(Date.now(), unitId);
-    } else this.ctx.db.prepare("delete from reads where unit_id = ?").run(unitId);
-    return this.afterReading(bookId, unitId, before, unlock);
+        ).run(Date.now(), unitId);
+        db.prepare(
+          `insert into page_reads (book_id, page, at, dwell_ms) select distinct book_id, page, ?, 0 from blocks where unit_id = ?
+           on conflict(book_id, page) do nothing`,
+        ).run(Date.now(), unitId);
+      } else {
+        db.prepare("delete from reads where unit_id = ?").run(unitId);
+        db.prepare("delete from page_reads where book_id = ? and page in (select distinct page from blocks where unit_id = ?)").run(bookId, unitId);
+      }
+    });
+    return this.afterReading(bookId, before, unlock);
   }
 
-  private afterReading(bookId: string, unitId: number, before: number, unlock: (unitId: number) => number) {
-    const readFraction = this.unitFraction(unitId);
+  private afterReading(bookId: string, before: Map<number, number>, unlock: (unitId: number) => number): ReadResult {
+    const units: ReadResult["units"] = [];
     let unlocked = 0;
-    if (readFraction >= UNIT_DONE) {
-      unlocked = unlock(unitId);
-      if (before < UNIT_DONE) this.onUnitRead(bookId, unitId);
+    let crossed = false;
+    for (const [unitId, was] of before) {
+      const readFraction = this.unitFraction(unitId);
+      units.push({ unitId, readFraction });
+      if (readFraction >= UNIT_DONE) {
+        unlocked += unlock(unitId);
+        if (was < UNIT_DONE) this.onUnitRead(bookId, unitId);
+      }
+      if (Math.floor(was * 20) !== Math.floor(readFraction * 20)) crossed = true;
     }
     if (unlocked) this.ctx.emit("cards.changed", { bookId });
-    if (Math.floor(before * 20) !== Math.floor(readFraction * 20) || unlocked) this.changed(bookId);
-    return { readFraction, unlocked };
+    if (crossed || unlocked) this.changed(bookId);
+    return { units, unlocked };
   }
 
   addTime(bookId: string, ms: number): void {
@@ -474,7 +583,7 @@ export class Library {
     const rows = this.ctx.db
       .prepare(
         `select f.rowid as id, snippet(blocks_fts, 0, char(1), char(2), '…', 14) as snippet,
-           b.book_id as book_id, b.unit_id as unit_id, k.title as book_title, u.title as unit_title
+           b.book_id as book_id, b.unit_id as unit_id, b.page as page, k.title as book_title, u.title as unit_title
          from blocks_fts f join blocks b on b.id = f.rowid join books k on k.id = b.book_id join sections u on u.id = b.unit_id
            join sections sec on sec.id = b.section_id
          where blocks_fts match ? ${bookId ? "and b.book_id = ?" : ""} and b.type not in ('equation')
@@ -488,56 +597,69 @@ export class Library {
       bookTitle: String(r["book_title"]),
       blockId: Number(r["id"]),
       unitId: Number(r["unit_id"]),
+      page: Number(r["page"]),
       unitTitle: String(r["unit_title"]),
       snippet: String(r["snippet"]),
     }));
   }
 
-  locate(blockId: number): { bookId: string; unitId: number } | null {
-    const r = this.ctx.db.prepare("select book_id, unit_id from blocks where id = ?").get(blockId) as
-      | { book_id: string; unit_id: number }
+  locate(blockId: number): { bookId: string; unitId: number; page: number; box: Rect | null } | null {
+    const r = this.ctx.db.prepare("select book_id, unit_id, page, bbox from blocks where id = ?").get(blockId) as
+      | { book_id: string; unit_id: number; page: number; bbox: string | null }
       | undefined;
-    return r ? { bookId: r.book_id, unitId: Number(r.unit_id) } : null;
+    if (!r) return null;
+    return { bookId: r.book_id, unitId: Number(r.unit_id), page: Number(r.page), box: r.bbox ? (JSON.parse(r.bbox) as Rect) : null };
   }
 
-  // ── the reader's own text ──────────────────────────────────────────────
+  // ── the reader's own versions ──────────────────────────────────────────
 
-  editBlock(blockId: number, text: string | null, source: "user" | "ai" = "user"): Block {
+  saveVersion(input: { id?: number; bookId: string; page: number; start: number; end: number; quote: string; text: string; source: "user" | "ai" }): Version {
     const db = this.ctx.db;
-    const before = db.prepare("select * from blocks where id = ?").get(blockId) as BlockRow | undefined;
-    if (!before) throw new Error("That passage no longer exists.");
-    const clean = text === null ? null : text.replace(/\r\n?/g, "\n").trim();
-    const restoring = clean === null || clean === before.text;
-    tx(db, () => {
-      if (restoring) db.prepare("update blocks set custom_text = null, custom_source = null, custom_at = null where id = ?").run(blockId);
-      else db.prepare("update blocks set custom_text = ?, custom_source = ?, custom_at = ? where id = ?").run(clean, source, Date.now(), blockId);
-      // Highlights follow their words into the new text, or wait for the
-      // text they were made on to come back.
-      const now = restoring ? before.text : plainText(clean!);
-      const hs = db.prepare("select * from highlights where block_id = ?").all(blockId) as Array<Record<string, unknown>>;
-      for (const h of hs) {
-        const quote = String(h["quote"]);
-        const at = now.indexOf(quote);
-        if (at >= 0) db.prepare("update highlights set start = ?, end = ?, on_custom = ? where id = ?").run(at, at + quote.length, restoring ? 0 : 1, h["id"] as number);
+    const text = input.text.replace(/\r\n?/g, "\n").trim();
+    if (!text) throw new Error("A version needs some text.");
+    const now = Date.now();
+    let id = input.id;
+    if (id) {
+      db.prepare("update versions set text = ?, source = ?, updated_at = ? where id = ?").run(text, input.source, now, id);
+    } else {
+      // One version per passage: writing over the same words replaces it.
+      const same = db
+        .prepare("select id from versions where book_id = ? and page = ? and start = ? and end = ?")
+        .get(input.bookId, input.page, input.start, input.end) as { id: number } | undefined;
+      if (same) {
+        id = Number(same.id);
+        db.prepare("update versions set text = ?, source = ?, updated_at = ? where id = ?").run(text, input.source, now, id);
+      } else {
+        id = Number(
+          db
+            .prepare(
+              `insert into versions (book_id, page, start, end, quote, text, source, created_at, updated_at)
+               values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .run(input.bookId, input.page, input.start, input.end, input.quote, text, input.source, now, now).lastInsertRowid,
+        );
       }
-    });
-    return blockFromRow(db.prepare("select * from blocks where id = ?").get(blockId) as unknown as BlockRow);
+    }
+    const row = db.prepare("select * from versions where id = ?").get(id) as Record<string, unknown> | undefined;
+    if (!row) throw new Error("That version no longer exists.");
+    return versionFromRow(row);
+  }
+
+  removeVersion(id: number): void {
+    this.ctx.db.prepare("delete from versions where id = ?").run(id);
   }
 
   // ── highlights ─────────────────────────────────────────────────────────
 
-  addHighlight(input: { bookId: string; blockId: number; start: number; end: number; quote: string; color: HighlightColor; note?: string }): Highlight {
-    const b = this.ctx.db.prepare("select unit_id, custom_text from blocks where id = ?").get(input.blockId) as
-      | { unit_id: number; custom_text: string | null }
-      | undefined;
-    if (!b) throw new Error("That passage no longer exists.");
+  async addHighlight(input: { bookId: string; page: number; start: number; end: number; quote: string; color: HighlightColor; note?: string }): Promise<Highlight> {
+    const at = await this.anchor(input.bookId, input.page, input.start, input.end);
     const now = Date.now();
     const r = this.ctx.db
       .prepare(
-        `insert into highlights (book_id, block_id, unit_id, start, end, quote, on_custom, color, note, created_at, updated_at)
+        `insert into highlights (book_id, block_id, unit_id, page, start, end, quote, color, note, created_at, updated_at)
          values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(input.bookId, input.blockId, b.unit_id, input.start, input.end, input.quote, b.custom_text === null ? 0 : 1, input.color, input.note ?? "", now, now);
+      .run(input.bookId, at.blockId ?? 0, at.unitId ?? 0, input.page, input.start, input.end, input.quote, input.color, input.note ?? "", now, now);
     return highlightFromRow(this.ctx.db.prepare("select * from highlights where id = ?").get(Number(r.lastInsertRowid)) as Record<string, unknown>);
   }
 
@@ -557,21 +679,10 @@ export class Library {
   highlights(bookId: string): HighlightRow[] {
     const rows = this.ctx.db
       .prepare(
-        `select h.*, u.title as unit_title, coalesce(b.custom_text, b.text) as block_text from highlights h
-         join blocks b on b.id = h.block_id join sections u on u.id = h.unit_id
-         where h.book_id = ? order by b.ord, h.start`,
+        `select h.*, u.title as unit_title from highlights h left join sections u on u.id = h.unit_id
+         where h.book_id = ? and h.page is not null order by h.page, h.start`,
       )
       .all(bookId) as Array<Record<string, unknown>>;
-    return rows.map((r) => {
-      const h = highlightFromRow(r);
-      const text = String(r["block_text"]);
-      const from = Math.max(0, h.start - 80);
-      const to = Math.min(text.length, h.end + 80);
-      return {
-        ...h,
-        unitTitle: String(r["unit_title"]),
-        context: `${from ? "…" : ""}${text.slice(from, to)}${to < text.length ? "…" : ""}`,
-      };
-    });
+    return rows.map((r) => ({ ...highlightFromRow(r), unitTitle: r["unit_title"] === null ? "" : String(r["unit_title"]) }));
   }
 }
