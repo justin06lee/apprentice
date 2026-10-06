@@ -281,6 +281,12 @@
             "web/src/styles/app.css",
             "web/src/styles/base.css"
           ]
+        },
+        {
+          "name": "PDF page layout helpers",
+          "files": [
+            "web/src/lib/pages.ts"
+          ]
         }
       ],
       "flows": [
@@ -320,7 +326,7 @@
         "Route changes must account for the store's history used by back navigation."
       ],
       "edges": [
-        "Reader — App renders the reader route; the palette uses reader state and search presentation.",
+        "Reader — App renders the reader route; the palette uses reader state and search presentation; page layout helpers support PDF reading.",
         "Study tools — App renders review; shared styles cover panels and review screens.",
         "Visual canvases — App renders the knowledge map; shared styles cover map and sketch screens.",
         "IPC contract — store and API access use shared book, settings, job, and status types.",
@@ -465,6 +471,227 @@
         "Desktop bridge — esbuild bundles main and preload.",
         "PDF import and rendering — esbuild bundles workers, and the parser inspection script calls ingestion code.",
         "Desktop runtime — Electron runs the development app and rasterizes icons."
+      ]
+    },
+    "reader": {
+      "summary": "The reader opens a PDF as a turnable spread, or a single page in a narrow window, with optional margin trimming. Book handles page navigation and pointer selection; Sheet draws the page image and overlays positioned from text-layer geometry. A shared reader store keeps the current book, page, annotations, and tools in sync across the view.",
+      "map": [
+        {
+          "name": "Page layout, turning, selection, and reading progress",
+          "files": [
+            "web/src/views/reader/Book.tsx",
+            "web/src/views/reader/state.ts"
+          ]
+        },
+        {
+          "name": "Page image and overlays",
+          "files": [
+            "web/src/views/reader/Sheet.tsx",
+            "web/src/views/reader/Slip.tsx"
+          ]
+        },
+        {
+          "name": "Selection, highlight, and region actions",
+          "files": [
+            "web/src/views/reader/menus.tsx",
+            "web/src/views/reader/Book.tsx"
+          ]
+        },
+        {
+          "name": "Reader layout and side panel",
+          "files": [
+            "web/src/views/reader/Reader.tsx",
+            "web/src/views/reader/state.ts"
+          ]
+        },
+        {
+          "name": "Passage rewrites",
+          "files": [
+            "web/src/views/reader/Slip.tsx",
+            "web/src/views/reader/Sheet.tsx"
+          ]
+        },
+        {
+          "name": "Contents and page navigation",
+          "files": [
+            "web/src/views/reader/Toc.tsx",
+            "web/src/views/reader/PageBar.tsx",
+            "web/src/views/reader/state.ts"
+          ]
+        },
+        {
+          "name": "Search and page marks",
+          "files": [
+            "web/src/views/reader/SearchBox.tsx",
+            "web/src/views/reader/Sheet.tsx"
+          ]
+        },
+        {
+          "name": "Flashcards from passages",
+          "files": [
+            "web/src/views/reader/CardComposer.tsx"
+          ]
+        },
+        {
+          "name": "Theme, page count, zoom, and turn settings",
+          "files": [
+            "web/src/views/reader/ViewMenu.tsx"
+          ]
+        }
+      ],
+      "flows": [
+        {
+          "name": "Open and read",
+          "steps": [
+            "Reader opens the book through the reader store",
+            "Book chooses the visible spread and page scale",
+            "Sheet draws each page image and its overlays",
+            "Book tracks time spent with visible pages as reading progress"
+          ]
+        },
+        {
+          "name": "Select and annotate",
+          "steps": [
+            "Book handles a drag across one or two pages",
+            "Text-layer geometry resolves a passage, or the drag defines a region",
+            "menus offers actions for the selection, highlight, or region",
+            "Sheet draws the resulting marks and slips"
+          ]
+        },
+        {
+          "name": "Search within a book",
+          "steps": [
+            "SearchBox collects a query and displays hits",
+            "Opening a hit navigates to its page",
+            "Sheet marks matching words on the page"
+          ]
+        }
+      ],
+      "files": [
+        "web/src/views/reader/Book.tsx — spread layout, page turns, pointer selection, and reading progress",
+        "web/src/views/reader/state.ts — shared state for the open book, page, annotations, and reader tools",
+        "web/src/views/reader/Sheet.tsx — page image and text-aligned overlays",
+        "web/src/views/reader/Reader.tsx — reader layout, contents, book, and study panel",
+        "web/src/views/reader/menus.tsx — actions for selections, highlights, and boxed regions",
+        "web/src/views/reader/Slip.tsx — passage versions and the rewrite bench",
+        "web/src/views/reader/PageBar.tsx — chapter progress, book scrubber, and page entry",
+        "web/src/views/reader/Toc.tsx — chapters, sections, and page navigation",
+        "web/src/views/reader/SearchBox.tsx — book search, hit navigation, and query terms for marks",
+        "web/src/views/reader/CardComposer.tsx — flashcard drafting from a passage"
+      ],
+      "rules": [
+        "Keep selection pointer handling in Book so a drag can cross pages; Sheet handles pointers only for slips and pins marked data-ui.",
+        "Position text-based overlays from page text-layer coordinates using the page scale, so they align with the printed glyphs.",
+        "A passage version covers the page text as a slip; it does not change the PDF text.",
+        "Reader state resets when a book opens; Book decides spread layout and page size while other views navigate by page."
+      ],
+      "edges": [
+        "App shell — Reader uses shared UI, settings, navigation, page-text helpers, and styles.",
+        "Study tools — Reader loads the study panel beside the book and opens card drafting from passages.",
+        "IPC contract — page geometry, annotation types, and API types define reader data.",
+        "Library and storage — API calls load book data, search hits, annotations, and reading progress.",
+        "PDF import and rendering — page images and text layers supply the content and geometry Sheet and Book use."
+      ]
+    },
+    "pdf-import": {
+      "summary": "This layer imports PDFs into book structure and serves the PDF pages used by the reader. MuPDF extraction gathers page data, whole-book analysis identifies sections and regions, and the import worker saves the result in one transaction. A separate render worker draws pages and returns text layers, trim, sizes, and regions; import structure does not determine page appearance.",
+      "map": [
+        {
+          "name": "PDF opening, outline, and drawing",
+          "files": [
+            "desktop/ingest/pdf.ts"
+          ]
+        },
+        {
+          "name": "Page text and graphics extraction",
+          "files": [
+            "desktop/ingest/extract.ts"
+          ]
+        },
+        {
+          "name": "Chapters, blocks, and page regions",
+          "files": [
+            "desktop/ingest/analyze.ts"
+          ]
+        },
+        {
+          "name": "Reading unit boundaries",
+          "files": [
+            "desktop/ingest/units.ts"
+          ]
+        },
+        {
+          "name": "Concepts, links, and first cards",
+          "files": [
+            "desktop/ingest/concepts.ts"
+          ]
+        },
+        {
+          "name": "Import progress and database save",
+          "files": [
+            "desktop/ingest/worker.ts"
+          ]
+        },
+        {
+          "name": "Page text geometry and trim",
+          "files": [
+            "desktop/ingest/pagetext.ts",
+            "desktop/render-worker.ts"
+          ]
+        },
+        {
+          "name": "Page rendering and cache",
+          "files": [
+            "desktop/render.ts",
+            "desktop/render-worker.ts"
+          ]
+        }
+      ],
+      "flows": [
+        {
+          "name": "Import",
+          "steps": [
+            "desktop/ingest/worker.ts opens the PDF and reads its outline",
+            "desktop/ingest/extract.ts reads each page into lines, images, and shapes",
+            "desktop/ingest/analyze.ts identifies structure and regions across the whole book",
+            "desktop/ingest/units.ts plans reading units",
+            "desktop/ingest/concepts.ts finds terms, links, and first cards",
+            "desktop/ingest/worker.ts saves the book in one transaction"
+          ]
+        },
+        {
+          "name": "Page request",
+          "steps": [
+            "desktop/render.ts checks its disk or in-memory cache and sends a worker request",
+            "desktop/render-worker.ts opens or reuses the PDF",
+            "desktop/ingest/pdf.ts renders a page or region, or desktop/ingest/pagetext.ts builds text and trim data",
+            "desktop/render-worker.ts replies to desktop/render.ts"
+          ]
+        }
+      ],
+      "files": [
+        "desktop/ingest/worker.ts — runs the import and saves the completed book",
+        "desktop/ingest/analyze.ts — turns whole-book page data into blocks, sections, and regions",
+        "desktop/ingest/extract.ts — extracts styled lines, images, and vector shapes",
+        "desktop/render.ts — coordinates render requests and caches pages and text",
+        "desktop/render-worker.ts — serves page images, sizes, text, trim, and regions",
+        "desktop/ingest/pagetext.ts — builds page text geometry and trim",
+        "desktop/ingest/concepts.ts — finds concepts, mentions, links, and first cards",
+        "desktop/ingest/units.ts — plans chapter-sized reading units",
+        "desktop/ingest/pdf.ts — wraps shared MuPDF opening, outline, and rendering calls"
+      ],
+      "rules": [
+        "Keep semantic classification in whole-book analysis; extraction only preserves the page data needed for those decisions.",
+        "Preserve the import worker’s single-transaction save so a partially imported book is not stored.",
+        "The reader displays the PDF’s own pages; imported structure supports navigation and study data rather than deciding appearance.",
+        "Bump TEXT_VERSION in desktop/render.ts when text-layer shape or extraction changes so old caches are ignored."
+      ],
+      "edges": [
+        "IPC contract — page text, trim, regions, and study types use shared contracts",
+        "Desktop bridge — the main process uses desktop/render.ts for page requests and receives import progress",
+        "Library and storage — the import worker writes the completed book to SQLite",
+        "Reader — rendered pages and text geometry support page display and interaction",
+        "Learning services — concept extraction uses term matching from the knowledge service"
       ]
     }
   },

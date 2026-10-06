@@ -30,6 +30,7 @@ Its files: web/src/views/panel/Panel.tsx, web/src/views/panel/Ask.tsx, web/src/v
 Reaches into: web/src/lib/markdown.ts, web/src/lib/stream.ts
 Tags: panel, chat, ai
 Screenshot (read it if you need to see it): /home/justin06lee/.config/ruri/uploads/2b61ed97-bd35-4a48-9fef-afdc2c6fffb5-mcp-bridge-blob-1790901534992-naulbt.png
+Its code has changed since that picture — if you change it, `ruri edit study-panel --shot <new picture>`
 
 ## rewrite-card — the rewrite card
 The reader's own versions of passages, laid over the page like pasted slips in the book's type size (tab: show the book's text, edit, rewrite again, remove), and the bench that writes one in place — by hand, or streamed from a model with style chips and Use this / Again.
@@ -48,12 +49,14 @@ Flashcard review screen: card with Space to reveal, Again/Hard/Good/Easy showing
 Its files: web/src/views/review/Review.tsx, web/src/styles/review.css
 Tags: flashcards, fsrs, screen
 Screenshot (read it if you need to see it): /home/justin06lee/.config/ruri/uploads/5180dee4-eff4-469b-ae80-43736a1c1531-mcp-bridge-blob-1790902136776-zsphf2.png
+Its code has changed since that picture — if you change it, `ruri edit review-card --shot <new picture>`
 
 ## library-shelf — the library shelf
 Library screen: continue-reading hero, grid of book covers with progress and due counts, import progress veils, add-textbook tile.
 Its files: web/src/views/library/Library.tsx, web/src/styles/library.css
 Tags: screen, library, books
 Screenshot (read it if you need to see it): /home/justin06lee/.config/ruri/uploads/49fdce69-cde3-4c98-86e1-db3046342cb3-mcp-bridge-blob-1790902124318-ko7ujn.png
+Its code has changed since that picture — if you change it, `ruri edit library-shelf --shot <new picture>`
 
 ## knowledge-map — the knowledge map
 Force-directed concept graph (canvas, d3-force in a module worker — needs the app:// origin, not file://) colored by knowledge state, with state tiles, study-next list and concept detail beside it. State colors are validated tokens (--m-*).
@@ -61,6 +64,7 @@ Its files: web/src/views/map/KnowledgeMap.tsx, web/src/views/map/GraphCanvas.tsx
 Reaches into: web/src/styles/base.css
 Tags: graph, canvas, screen, dataviz
 Screenshot (read it if you need to see it): /home/justin06lee/.config/ruri/uploads/10d9f52f-a13e-450d-8c20-1244da1a4789-mcp-bridge-blob-1790902831706-m61cv8.png
+Its code has changed since that picture — if you change it, `ruri edit knowledge-map --shot <new picture>`
 
 ## page-bar — the page bar
 Strip under the book: open chapter with "n of m" and Mark read, a scrubber over the whole book (chapter ticks, pages read painted on a canvas, drag to go), and the page number that takes a page to go to.

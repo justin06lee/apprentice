@@ -10,12 +10,12 @@ Apprentice is a desktop study app for people learning from textbook PDFs. It ope
 ## The stack, top to bottom
 
 1. **App shell** — React 19, zustand, and Vite provide navigation, library, settings, shared UI, and window state. (`web/, web/src/, web/src/components/ +6 · 7 files`) → `.ruri/layers/app-shell.md`
-2. **Reader** — React views show the PDF's pages as a turnable spread with trimmed margins; selection, highlights, slips, search marks and reading progress are drawn from each page's text layer. (`web/src/views/reader/`)
+2. **Reader** — React views show the PDF's pages as a turnable spread with trimmed margins; selection, highlights, slips, search marks and reading progress are drawn from each page's text layer. (`web/src/views/reader/`) → `.ruri/layers/reader.md`
 3. **Study tools** — React panels provide questions, notes, cards, concepts, and reviews; Markdown and KaTeX render answers. (`web/src/views/panel/, web/src/views/review/`)
 4. **Visual canvases** — Canvas views draw sketches and a force-directed knowledge map with worker-based layout. (`web/src/views/sketch/, web/src/views/map/`)
 5. **IPC contract** — Shared TypeScript types, the page text-layer geometry (shared/pages.ts), and the Api contract connect the renderer and main process. (`shared/`)
 6. **Desktop bridge** — Electron main and preload expose the API and connect the window to desktop services. (`desktop/ · 2 files`) → `.ruri/layers/desktop-bridge.md`
-7. **PDF import and rendering** — MuPDF extraction, structural analysis and import workers turn PDFs into chapters and concepts; a render worker draws pages and serves text layers, printed areas and regions. (`desktop/ingest/, desktop/ · 2 files`)
+7. **PDF import and rendering** — MuPDF extraction, structural analysis and import workers turn PDFs into chapters and concepts; a render worker draws pages and serves text layers, printed areas and regions. (`desktop/ingest/, desktop/ · 2 files`) → `.ruri/layers/pdf-import.md`
 8. **Library and storage** — SQLite stores books and study data; library services handle reading and search, with files kept per book. (`desktop/ · 3 files`)
 9. **Learning services** — ts-fsrs schedules card reviews; concept services calculate knowledge and mastery. (`desktop/, desktop/knowledge/ · 1 file`)
 10. **AI services** — Yagami uses signed-in coding-agent CLIs for questions, rewrites, and background model work. (`desktop/ · 2 files`)

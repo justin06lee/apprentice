@@ -14,6 +14,7 @@ The app shell mounts the React app, selects the current view, and owns navigatio
 - **Shared dialogs, popovers, and toasts:** web/src/components/ui.tsx, web/src/store.ts
 - **Renderer API access:** web/src/api.ts, web/src/store.ts
 - **Shell layout and screen styling:** web/src/styles/app.css, web/src/styles/base.css
+- **PDF page layout helpers:** web/src/lib/pages.ts
 
 ## How it works
 
@@ -42,7 +43,7 @@ The app shell mounts the React app, selects the current view, and owns navigatio
 
 ## What it talks to
 
-- Reader — App renders the reader route; the palette uses reader state and search presentation.
+- Reader — App renders the reader route; the palette uses reader state and search presentation; page layout helpers support PDF reading.
 - Study tools — App renders review; shared styles cover panels and review screens.
 - Visual canvases — App renders the knowledge map; shared styles cover map and sketch screens.
 - IPC contract — store and API access use shared book, settings, job, and status types.
